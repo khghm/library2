@@ -37,6 +37,7 @@ export default function AuthorPortal({ uploads, onPublish, onDelete, onEdit, toa
   const [asMarkdown, setAsMarkdown] = useState(false);
   const [pasted, setPasted] = useState('');
   const [dragOver, setDragOver] = useState(false);
+  const [cleanFlag, setCleanFlag] = useState(true);
   const fileRef = useRef<HTMLInputElement>(null);
   const moreRef = useRef<HTMLInputElement>(null);
 
@@ -55,7 +56,7 @@ export default function AuthorPortal({ uploads, onPublish, onDelete, onEdit, toa
       for (const file of files) {
         try {
           const stem = file.name.replace(/\.[^.]+$/, '');
-          let chs = await parseFile(file);
+          let chs = await parseFile(file, { clean: cleanFlag });
           if (chs.length === 1 && isGenericTitle(chs[0].title)) {
             chs = [{ ...chs[0], title: stem || chs[0].title }];
           }
@@ -90,7 +91,7 @@ export default function AuthorPortal({ uploads, onPublish, onDelete, onEdit, toa
 
   const handlePaste = () => {
     if (!pasted.trim()) return;
-    const chs = asMarkdown ? mdToChapters(pasted) : textToChapters(pasted);
+    const chs = asMarkdown ? mdToChapters(pasted, cleanFlag) : textToChapters(pasted, cleanFlag);
     setChapters(chs);
     setFileNames([]);
     toast(`متن پردازش شد — ${faNum(chs.length)} فصل`);
@@ -218,8 +219,25 @@ export default function AuthorPortal({ uploads, onPublish, onDelete, onEdit, toa
             />
           </div>
 
+          {/* text cleaning toggle */}
+          <label className="mt-6 flex cursor-pointer items-start gap-3 rounded-lg border border-night-600 bg-night-900/40 px-4 py-3 transition-colors hover:border-turq-500/35">
+            <input
+              type="checkbox"
+              checked={cleanFlag}
+              onChange={(e) => setCleanFlag(e.target.checked)}
+              className="mt-1 h-4 w-4 shrink-0 accent-[#3fc8b4]"
+            />
+            <span className="text-[11px] leading-6 text-mist-400">
+              <span className="font-bold text-turq-400">پاک‌سازی خودکار متن هنگام بارگذاری</span>
+              <span className="mx-1.5 text-night-500">|</span>
+              کاراکترهای اضافیِ رایج در فایل‌های استخراج‌شده نظیر
+              <span dir="ltr" className="mx-1.5 rounded bg-night-700 px-1.5 py-0.5 font-mono text-[10px] tracking-wider text-gold-400"># * _ | \ / + $ ! -</span>
+              به‌همراه خطوط جداکننده و شماره‌صفحه‌های تنها حذف می‌شوند تا متن کتاب تمیز بماند. (کاربردهای سالم — مانند «و/یا» یا علامت تعجب پس از کلمه — حفظ می‌شوند.)
+            </span>
+          </label>
+
           {/* upload zone */}
-          <div className="mt-6">
+          <div className="mt-5">
             <span className="mb-2 block text-xs font-bold text-mist-400">فایل کتاب <span className="font-normal text-mist-500">— یک یا چند فایل</span></span>
             <div
               onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}

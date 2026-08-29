@@ -38,7 +38,7 @@ export default function BookEditor({ book, onSave, onClose, toast }: Props) {
     };
   }, [onClose]);
 
-  const liveChapters = useMemo(() => mdToChapters(text), [text]);
+  const liveChapters = useMemo(() => mdToChapters(text, false), [text]);
   const spans = useMemo(() => chapterSpans(text), [text]);
   const words = useMemo(() => liveChapters.reduce((a, c) => a + c.paras.reduce((x, p) => x + p.text.split(/\s+/).filter(Boolean).length, 0), 0), [liveChapters]);
 
@@ -74,7 +74,7 @@ export default function BookEditor({ book, onSave, onClose, toast }: Props) {
   const save = () => {
     if (!title.trim()) return toast('عنوان کتاب نمی‌تواند خالی باشد.');
     if (!author.trim()) return toast('نام نویسنده لازم است.');
-    const chapters = mdToChapters(text).filter((c) => c.paras.length > 0);
+    const chapters = mdToChapters(text, false).filter((c) => c.paras.length > 0);
     if (chapters.length === 0) return toast('متن کتاب خالی است؛ دست‌کم یک فصل با چند سطر بنویسید.');
     onSave({
       ...book,

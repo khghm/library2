@@ -2,6 +2,55 @@ import type { Chapter, Para } from './core';
 import { readingWords } from './core';
 
 /* ------------------------------------------------------------------ */
+/*  text noise cleaning — strips stray symbols that pollute files      */
+/*  exported from PDFs/scanners: # * _ | \ / + $ ! - and separator     */
+/*  lines, while protecting legitimate uses (و/یا, exclamation marks,  */
+/*  hyphenated compounds, ZWNJ)                                        */
+/* ------------------------------------------------------------------ */
+
+const ALWAYS_NOISE = /[#*_|\\+^~`$]/g;
+
+export function cleanNoise(input: string): string {
+  let t = input;
+  /* characters that are essentially always decoration/OCR noise */
+  t = t.replace(ALWAYS_NOISE, '');
+  /* slash: collapse mid-word runs, drop when not tightly between word chars */
+  t = t.replace(/([\p{L}\p{N}])\/{2,}(?=[\p{L}\p{N}])/gu, '$1/');
+  t = t.replace(/(^|[^\p{L}\p{N}])\/+(?=[\p{L}\p{N}])/gu, '$1');
+  t = t.replace(/\/+(?![\p{L}\p{N}])/gu, '');
+  /* hyphen: drop runs (---, --) and standalone hyphens; keep single mid-word */
+  t = t.replace(/-{2,}/g, '');
+  t = t.replace(/(^|[^\p{L}\p{N}])-+(?=[\p{L}\p{N}])/gu, '$1');
+  t = t.replace(/-+(?![\p{L}\p{N}])/gu, '');
+  /* exclamation: keep only directly after a word, collapse !!! → ! */
+  t = t.replace(/!{2,}/g, '!');
+  t = t.replace(/(^|[^\p{L}\p{N}])!+/gu, '$1');
+  /* tidy horizontal whitespace (ZWNJ is preserved) */
+  t = t.replace(/[ \t]{2,}/g, ' ');
+  return t.trim();
+}
+
+/** a line made only of symbols — or a lone page number — is noise */
+export function isNoiseLine(line: string): boolean {
+  const t = line.trim();
+  if (!t) return true;
+  if (t.length <= 3 && /^[۰-۹0-9.,،·\s]+$/.test(t)) return true;
+  return /^[\s#*_|\\/+\-$!؟?~^`.,:;=•·…]+$/.test(t);
+}
+
+function finalize(chapters: Chapter[], clean: boolean): Chapter[] {
+  if (!clean) return chapters.filter((c) => c.paras.length > 0);
+  return chapters
+    .map((c) => ({
+      title: cleanNoise(c.title) || c.title,
+      paras: c.paras
+        .map((p) => ({ ...p, text: cleanNoise(p.text) }))
+        .filter((p) => p.text.replace(/\s+/g, '').length > 0),
+    }))
+    .filter((c) => c.paras.length > 0);
+}
+
+/* ------------------------------------------------------------------ */
 /*  heading detection                                                  */
 /* ------------------------------------------------------------------ */
 
@@ -20,7 +69,6 @@ const NUMBERED = /^[([]?\s*[۰-۹0-9]+\s*[.):ـ\-–—]\s*\p{L}/u;
 /** short Roman-numeral lines: «III»، «XII.» */
 const ROMAN = /^\(?[IVXLC]+\)?\s*[.):]?\s*$/;
 
-/** a line is a heading candidate when it is short AND matches a pattern */
 function textHeading(t: string): boolean {
   if (!t || t.length > 60) return false;
   if (SECTION_WORDS.test(t)) return true;
@@ -50,7 +98,7 @@ export function isGenericTitle(title: string): boolean {
 /*  plain text → chapters                                              */
 /* ------------------------------------------------------------------ */
 
-export function textToChapters(raw: string): Chapter[] {
+export function textToChapters(raw: string, clean = true): Chapter[] {
   const lines = raw.replace(/\r\n/g, '\n').split('\n');
   const chapters: Chapter[] = [];
   let current: Chapter | null = null;
@@ -70,17 +118,13 @@ export function textToChapters(raw: string): Chapter[] {
 
   for (const line of lines) {
     const t = line.trim();
-    if (t === '---' || t === '***' || t === '___') {
-      flushPara();
-      continue;
-    }
     if (looksLikeHeading(t)) {
       flushPara();
       current = { title: stripMdHeading(t).slice(0, 60), paras: [] };
       chapters.push(current);
       continue;
     }
-    if (!t) {
+    if (!t || (clean && isNoiseLine(line))) {
       flushPara();
       continue;
     }
@@ -94,9 +138,10 @@ export function textToChapters(raw: string): Chapter[] {
 
   const out = chapters.filter((c) => c.paras.length > 0);
   if (out.length === 0) {
-    return [{ title: 'متن کتاب', paras: [{ text: raw.trim() || '—', k: 'p' }] }];
+    const body = clean ? cleanNoise(raw) : raw.trim();
+    return [{ title: 'متن کتاب', paras: [{ text: body || '—', k: 'p' }] }];
   }
-  return out;
+  return finalize(out, clean);
 }
 
 /* ------------------------------------------------------------------ */
@@ -115,7 +160,7 @@ export function inlineMd(text: string): string {
     .replace(/`([^`]+)`/g, '<code style="background:var(--pg-line);padding:0 .3em;border-radius:4px">$1</code>');
 }
 
-export function mdToChapters(md: string): Chapter[] {
+export function mdToChapters(md: string, clean = true): Chapter[] {
   const lines = md.replace(/\r\n/g, '\n').split('\n');
   const chapters: Chapter[] = [];
   let current: Chapter | null = null;
@@ -146,6 +191,10 @@ export function mdToChapters(md: string): Chapter[] {
       chapters.push(current);
       continue;
     }
+    if (clean && isNoiseLine(line)) {
+      flush();
+      continue;
+    }
     if (!current) {
       current = { title: 'آغاز کتاب', paras: [] };
       chapters.push(current);
@@ -154,7 +203,11 @@ export function mdToChapters(md: string): Chapter[] {
   }
   flush();
   const out = chapters.filter((c) => c.paras.length > 0);
-  return out.length ? out : [{ title: 'متن کتاب', paras: [{ text: md.trim() || '—', k: 'p' }] }];
+  if (out.length === 0) {
+    const body = clean ? cleanNoise(md) : md.trim();
+    return [{ title: 'متن کتاب', paras: [{ text: body || '—', k: 'p' }] }];
+  }
+  return finalize(out, clean);
 }
 
 /* ------------------------------------------------------------------ */
@@ -169,7 +222,7 @@ function isBoldHeading(el: Element): boolean {
   return !!strong && text === (strong.textContent || '').trim() && el.children.length <= 2;
 }
 
-export function htmlToChapters(html: string): Chapter[] {
+export function htmlToChapters(html: string, clean = true): Chapter[] {
   const doc = new DOMParser().parseFromString(html, 'text/html');
   const body = doc.body;
   const chapters: Chapter[] = [];
@@ -230,19 +283,19 @@ export function htmlToChapters(html: string): Chapter[] {
 
   walk(body);
   const out = chapters.filter((c) => c.paras.length > 0);
-  return out.length ? out : textToChapters(body.textContent || '');
+  return out.length ? finalize(out, clean) : textToChapters(body.textContent || '', clean);
 }
 
 /* ------------------------------------------------------------------ */
 /*  pdf → chapters                                                     */
 /* ------------------------------------------------------------------ */
 
-async function pdfToChapters(buf: ArrayBuffer): Promise<Chapter[]> {
+async function pdfToChapters(buf: ArrayBuffer, clean: boolean): Promise<Chapter[]> {
   const pdfjs = await import('pdfjs-dist');
   const worker = await import('pdfjs-dist/build/pdf.worker.min.mjs?url');
   pdfjs.GlobalWorkerOptions.workerSrc = worker.default;
 
-  const doc = await pdfjs.getDocument({ data: buf }).promise;
+  const doc = await pdfjs.getDocument({ data: new Uint8Array(buf) }).promise;
   const pages: string[] = [];
 
   for (let i = 1; i <= doc.numPages; i++) {
@@ -265,35 +318,41 @@ async function pdfToChapters(buf: ArrayBuffer): Promise<Chapter[]> {
   }
 
   const text = pages.join('\n\n');
-  if (!text.replace(/\s+/g, '')) {
+  /* scanned/image PDFs (or fonts without ToUnicode) yield no extractable text */
+  if (text.replace(/\s+/g, '').length < 40) {
     throw new Error('scanned-pdf');
   }
-  return textToChapters(text);
+  return textToChapters(text, clean);
 }
 
 /* ------------------------------------------------------------------ */
 /*  dispatcher                                                         */
 /* ------------------------------------------------------------------ */
 
-export async function parseFile(file: File): Promise<Chapter[]> {
+export interface ParseOptions {
+  clean?: boolean;
+}
+
+export async function parseFile(file: File, opts?: ParseOptions): Promise<Chapter[]> {
+  const clean = opts?.clean ?? true;
   const name = file.name.toLowerCase();
 
   if (name.endsWith('.md') || name.endsWith('.markdown')) {
-    return mdToChapters(await file.text());
+    return mdToChapters(await file.text(), clean);
   }
   if (name.endsWith('.html') || name.endsWith('.htm')) {
-    return htmlToChapters(await file.text());
+    return htmlToChapters(await file.text(), clean);
   }
   if (name.endsWith('.docx')) {
     const mammoth = await import('mammoth');
     const buf = await file.arrayBuffer();
     const res = await mammoth.convertToHtml({ arrayBuffer: buf });
-    return htmlToChapters(res.value);
+    return htmlToChapters(res.value, clean);
   }
   if (name.endsWith('.pdf')) {
-    return pdfToChapters(await file.arrayBuffer());
+    return pdfToChapters(await file.arrayBuffer(), clean);
   }
-  return textToChapters(await file.text());
+  return textToChapters(await file.text(), clean);
 }
 
 export const ACCEPTED = '.txt,.md,.markdown,.html,.htm,.docx,.pdf,.text,.rtf';
