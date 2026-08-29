@@ -478,8 +478,11 @@ function extractPageLines(items: PdfTextItem[]): string[] {
     const size = Math.hypot(b, d) || Math.abs(a) || it.height || 10;
     const w = it.width > 0 ? it.width : base.length * size * 0.42;
     const mirrored = a < 0;
+    /* keep the RAW string (presentation forms intact) — the reversed-order
+       detector below needs those forms to tell visual from logical order;
+       normalization happens only after the order has been repaired */
     pos.push({
-      str: base,
+      str: it.str,
       left: mirrored ? x - w : x,
       right: mirrored ? x : x + w,
       y,
@@ -634,35 +637,30 @@ function graphemeGroups(s: string): string[] {
 }
 
 /**
- * Some Persian/Arabic PDFs store pre-shaped glyphs in *visual* order, so the
- * extracted string comes back reversed (correct letter shapes, wrong order).
- * A reversed line has its words starting with *final* forms; a correct line
- * has them starting with *initial* forms. We only reverse when that signal is
- * unambiguous, so already-correct text is never touched.
+ * Some Persian/Arabic PDFs store pre-shaped glyphs in *visual* order. Spatial
+ * sorting (above) already restores the *word* order, but the letters inside
+ * each word remain reversed. A word whose first glyph is a *final* form is a
+ * reversed word (a correct word begins with an initial/isolated form). When
+ * the majority of a line's words show that signal we reverse the letters of
+ * EACH WORD — never the whole line, so word order stays put. Runs on the raw
+ * string, before normalization strips the presentation forms it relies on.
  */
-function fixReversedLine(line: string): string {
+function fixReversedWords(line: string): string {
   if (!/[\uFB50-\uFDFF\uFE70-\uFEFF]/.test(line)) return line;
   const words = line.split(/\s+/).filter(Boolean);
-  let reversed = false;
-  if (words.length >= 2) {
-    let finStart = 0;
-    let initStart = 0;
-    for (const w of words) {
-      const cls = formClass(w.codePointAt(0) || 0);
-      if (cls === 'fin') finStart++;
-      else if (cls === 'init') initStart++;
-    }
-    reversed = finStart > initStart && finStart >= 2;
-  } else if (words.length === 1) {
-    const cps = Array.from(words[0]);
-    if (cps.length >= 2) {
-      reversed =
-        formClass(cps[0].codePointAt(0) || 0) === 'fin' &&
-        formClass(cps[cps.length - 1].codePointAt(0) || 0) === 'init';
-    }
+  if (words.length === 0) return line;
+  let finStart = 0;
+  let initStart = 0;
+  for (const w of words) {
+    const cls = formClass(w.codePointAt(0) || 0);
+    if (cls === 'fin') finStart++;
+    else if (cls === 'init') initStart++;
   }
+  const reversed = finStart > initStart && finStart >= 2;
   if (!reversed) return line;
-  return graphemeGroups(line).reverse().join('');
+  // reverse the graphemes of every word in place (keeps harakat attached,
+  // keeps whitespace and word order untouched)
+  return line.replace(/\S+/g, (w) => graphemeGroups(w).reverse().join(''));
 }
 
 async function pdfToChapters(buf: ArrayBuffer, clean: boolean): Promise<Chapter[]> {
@@ -685,9 +683,10 @@ async function pdfToChapters(buf: ArrayBuffer, clean: boolean): Promise<Chapter[
   for (let i = 1; i <= doc.numPages; i++) {
     const page = await doc.getPage(i);
     const content = await page.getTextContent();
-    const lines = extractPageLines(content.items as unknown as PdfTextItem[]);
-    const repaired = repairMojibake(lines.join('\n'));
-    pages.push(repaired.split('\n').map(fixReversedLine).join('\n'));
+    const rawLines = extractPageLines(content.items as unknown as PdfTextItem[]);
+    const ordered = rawLines.map(fixReversedWords); // still raw — needs the presentation forms
+    const normalized = ordered.map(normalizePdfText); // forms → base letters
+    pages.push(repairMojibake(normalized.join('\n')));
   }
 
   const text = pages.join('\n\n');
