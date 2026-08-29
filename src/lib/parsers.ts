@@ -444,126 +444,46 @@ interface FloatingMark {
  *      are never split or wrongly glued.
  */
 function extractPageLines(items: PdfTextItem[]): string[] {
-  const pos: Placed[] = [];
-  const floating: FloatingMark[] = [];
-  let pendingBreak = false;
+  const rawLines: string[] = [];
+  let rawLine = '';
+  let prev: { left: number; right: number; size: number } | null = null;
+
+  const flush = () => {
+    const t = rawLine.replace(/\s{2,}/g, ' ').replace(/\u00A0/g, ' ').trim();
+    if (t) rawLines.push(t);
+    rawLine = '';
+    prev = null;
+  };
 
   for (const it of items) {
     if (!it || typeof it.str !== 'string') continue;
-    if (it.hasEOL) pendingBreak = true;
-    if (it.str === '') continue;
-
-    const text = normalizePdfText(it.str);
-    if (!text) continue; // item was only tatweel/PUA decoration
-
-    /* diacritics stored as *standalone* items (common in Quranic/Arabic
-       typesetting) float loose and scramble spatial sorting — set them
-       aside and re-attach each to its nearest base letter later */
-    let base = '';
-    let marks = '';
-    for (const ch of text) {
-      if (base === '' && isCombiningMark(ch.codePointAt(0) || 0)) marks += ch;
-      else base += ch;
-    }
-    if (base === '') {
-      floating.push({ marks, x: it.transform[4], y: it.transform[5] });
+    if (it.str === '') {
+      if (it.hasEOL) flush();
       continue;
     }
+    const size =
+      Math.hypot(it.transform[1], it.transform[3]) ||
+      Math.abs(it.transform[0]) ||
+      it.height ||
+      10;
+    const w = it.width > 0 ? it.width : it.str.length * size * 0.42;
+    const mirrored = it.transform[0] < 0;
+    const left = mirrored ? it.transform[4] - w : it.transform[4];
+    const right = mirrored ? it.transform[4] : it.transform[4] + w;
 
-    const a = it.transform[0];
-    const b = it.transform[1];
-    const d = it.transform[3];
-    const x = it.transform[4];
-    const y = it.transform[5];
-    const size = Math.hypot(b, d) || Math.abs(a) || it.height || 10;
-    const w = it.width > 0 ? it.width : base.length * size * 0.42;
-    const mirrored = a < 0;
-    /* keep the RAW string (presentation forms intact) — the reversed-order
-       detector below needs those forms to tell visual from logical order;
-       normalization happens only after the order has been repaired */
-    pos.push({
-      str: it.str,
-      left: mirrored ? x - w : x,
-      right: mirrored ? x : x + w,
-      y,
-      size,
-      mirrored,
-      eolBefore: pendingBreak,
-    });
-    pendingBreak = false;
+    if (prev) {
+      // a genuine horizontal gap marks a word boundary (works LTR and RTL)
+      const gap = Math.max(left - prev.right, prev.left - right);
+      if (gap > size * 0.18) rawLine += ' ';
+    }
+    // keep the raw string — presentation forms stay intact so the
+    // reversed-word detector below can use them as its signal
+    rawLine += it.str;
+    prev = { left, right, size };
+    if (it.hasEOL) flush();
   }
-  if (pos.length === 0) return [];
-
-  // reading order: top of page first (PDF y grows upward)
-  pos.sort((p, q) => q.y - p.y);
-
-  const lines: string[] = [];
-  let i = 0;
-  while (i < pos.length) {
-    const lineItems: Placed[] = [pos[i]];
-    const lineY = pos[i].y;
-    const lineSize = pos[i].size;
-    let j = i + 1;
-    while (j < pos.length && !pos[j].eolBefore && Math.abs(pos[j].y - lineY) <= lineSize * 0.6) {
-      lineItems.push(pos[j]);
-      j++;
-    }
-    i = j;
-
-    // direction detection
-    let arabicChars = 0;
-    let totalChars = 0;
-    let mirroredCount = 0;
-    for (const it of lineItems) {
-      if (it.mirrored) mirroredCount++;
-      for (const ch of it.str) {
-        totalChars++;
-        if (isArabicChar(ch)) arabicChars++;
-      }
-    }
-    const rtl = arabicChars > totalChars * 0.4 || mirroredCount > lineItems.length * 0.5;
-
-    // re-attach the loose diacritics of this line to their nearest letters
-    for (let f = floating.length - 1; f >= 0; f--) {
-      const m = floating[f];
-      if (Math.abs(m.y - lineY) > lineSize * 0.6) continue;
-      let best: Placed | null = null;
-      let bestD = Infinity;
-      for (const it of lineItems) {
-        const d = m.x < it.left ? it.left - m.x : m.x > it.right ? m.x - it.right : 0;
-        if (d < bestD) {
-          bestD = d;
-          best = it;
-        }
-      }
-      if (best && bestD < lineSize * 0.9) {
-        best.str += m.marks;
-        floating.splice(f, 1);
-      }
-    }
-
-    // restore logical order from spatial positions
-    if (rtl) lineItems.sort((p, q) => q.left - p.left); // rightmost first
-    else lineItems.sort((p, q) => p.left - q.left);
-
-    // join — a space only where a real gap exists (a little extra leniency
-    // right after sentence-ending punctuation, where typesetters tighten gaps)
-    let line = '';
-    for (let k = 0; k < lineItems.length; k++) {
-      const cur = lineItems[k];
-      if (k > 0) {
-        const prevItem = lineItems[k - 1];
-        const gap = rtl ? prevItem.left - cur.right : cur.left - prevItem.right;
-        const endsPunct = /[.!؟؛:,،»")\]]$/.test(prevItem.str);
-        if (gap > cur.size * 0.08 || (endsPunct && gap > cur.size * 0.01)) line += ' ';
-      }
-      line += cur.str;
-    }
-    if (rtl) line = flipBrackets(line);
-    const t = line.replace(/\s{2,}/g, ' ').replace(/\u00A0/g, ' ').trim();
-    if (t) lines.push(t);
-  }
-  return lines;
+  flush();
+  return rawLines;
 }
 
 /**
@@ -647,8 +567,8 @@ function graphemeGroups(s: string): string[] {
  */
 function fixReversedWords(line: string): string {
   if (!/[\uFB50-\uFDFF\uFE70-\uFEFF]/.test(line)) return line;
-  const words = line.split(/\s+/).filter(Boolean);
-  if (words.length === 0) return line;
+  const words = line.split(/\s+/).filter((w) => Array.from(w).length >= 2);
+  if (words.length < 2) return line;
   let finStart = 0;
   let initStart = 0;
   for (const w of words) {
@@ -656,7 +576,11 @@ function fixReversedWords(line: string): string {
     if (cls === 'fin') finStart++;
     else if (cls === 'init') initStart++;
   }
-  const reversed = finStart > initStart && finStart >= 2;
+  // Overwhelming evidence only: a correctly-ordered RTL line starts its
+  // joining-letter words with initial forms, a reversed line with final
+  // forms. Require several final-form starts and essentially no initial
+  // forms, so well-formed text is never touched.
+  const reversed = finStart >= 2 && initStart === 0;
   if (!reversed) return line;
   // reverse the graphemes of every word in place (keeps harakat attached,
   // keeps whitespace and word order untouched)
