@@ -292,8 +292,16 @@ export function htmlToChapters(html: string, clean = true): Chapter[] {
 
 async function pdfToChapters(buf: ArrayBuffer, clean: boolean): Promise<Chapter[]> {
   const pdfjs = await import('pdfjs-dist');
-  const worker = await import('pdfjs-dist/build/pdf.worker.min.mjs?url');
-  pdfjs.GlobalWorkerOptions.workerSrc = worker.default;
+  /* Load the worker engine on the main thread: the module registers
+     globalThis.pdfjsWorker, so pdf.js skips spawning a separate worker
+     file entirely and parses in-thread — this works in every hosting
+     environment, even where module workers are blocked. */
+  if (!(globalThis as { pdfjsWorker?: unknown }).pdfjsWorker) {
+    await import('pdfjs-dist/build/pdf.worker.min.mjs');
+  }
+  if (!pdfjs.GlobalWorkerOptions.workerSrc) {
+    pdfjs.GlobalWorkerOptions.workerSrc = 'inline://main-thread';
+  }
 
   const doc = await pdfjs.getDocument({ data: new Uint8Array(buf) }).promise;
   const pages: string[] = [];

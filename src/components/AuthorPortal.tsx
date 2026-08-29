@@ -66,8 +66,10 @@ export default function AuthorPortal({ uploads, onPublish, onDelete, onEdit, toa
         } catch (err) {
           const msg =
             err instanceof Error && err.message === 'scanned-pdf'
-              ? `«${file.name}» اسکن‌شده است و متنِ قابل استخراج ندارد.`
-              : `خواندن «${file.name}» ناموفق بود؛ فایل سالم یا قالب دیگری امتحان کنید.`;
+              ? `«${file.name}» اسکن‌شده (تصویری) است و متنِ قابل استخراج ندارد.`
+              : `خواندن «${file.name}» ناموفق بود${
+                  err instanceof Error && err.message ? ` — ${err.message}` : ''
+                }`;
           toast(msg);
         }
       }
