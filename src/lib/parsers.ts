@@ -303,54 +303,109 @@ interface PdfTextItem {
   hasEOL?: boolean;
 }
 
+function isArabicChar(ch: string): boolean {
+  const c = ch.codePointAt(0) || 0;
+  return (
+    (c >= 0x0600 && c <= 0x06ff) ||
+    (c >= 0x0750 && c <= 0x077f) ||
+    (c >= 0x08a0 && c <= 0x08ff) ||
+    (c >= 0xfb50 && c <= 0xfdff) ||
+    (c >= 0xfe70 && c <= 0xfeff)
+  );
+}
+
+interface Placed {
+  str: string;
+  left: number;
+  right: number;
+  y: number;
+  size: number;
+  mirrored: boolean;
+}
+
 /**
- * Rebuilds page lines from raw pdf.js text items:
- *  - line breaks come from pdf.js `hasEOL` marks (y-coordinate fallback)
- *  - a space is inserted only when a real horizontal gap exists between
- *    items, so Persian/Arabic words are never split mid-word and joined
- *    fragments are never glued across word boundaries
+ * Rebuilds page text from raw pdf.js items, spatially — the key to fixing
+ * Persian/Arabic PDFs whose content stream stores glyphs in *visual* order
+ * (correct on screen, reversed in the stream). pdf.js hands items back in
+ * stream order, so we:
+ *   1. group items into visual lines by their y coordinate (top → bottom),
+ *   2. detect each line's direction (majority Arabic script, or mirrored
+ *      text matrices),
+ *   3. sort the line's items by real x position — rightmost first for RTL —
+ *      which restores both word order *and* letter order inside words,
+ *   4. insert a space only where a genuine horizontal gap exists, so words
+ *      are never split or wrongly glued.
  */
 function extractPageLines(items: PdfTextItem[]): string[] {
-  const lines: string[] = [];
-  let line = '';
-  let prev: { endX: number; size: number; y: number; rtl: boolean } | null = null;
-
-  const pushLine = () => {
-    const t = line.replace(/ {2,}/g, ' ').replace(/\u00A0/g, ' ').trim();
-    if (t) lines.push(t);
-    line = '';
-    prev = null;
-  };
-
+  const pos: Placed[] = [];
   for (const it of items) {
-    if (!it || typeof it.str !== 'string') continue;
-    if (it.str === '') {
-      if (it.hasEOL) pushLine();
-      continue;
-    }
+    if (!it || typeof it.str !== 'string' || it.str.trim() === '') continue;
     const a = it.transform[0];
     const b = it.transform[1];
     const d = it.transform[3];
     const x = it.transform[4];
     const y = it.transform[5];
-    const size = Math.hypot(b, d) || Math.abs(a) || it.height || 1;
-    const rtl = a < 0; // mirrored text matrix → right-to-left run
+    const size = Math.hypot(b, d) || Math.abs(a) || it.height || 10;
     const w = it.width > 0 ? it.width : it.str.length * size * 0.42;
-    const endX = rtl ? x - w : x + w;
+    const mirrored = a < 0;
+    pos.push({
+      str: it.str,
+      left: mirrored ? x - w : x,
+      right: mirrored ? x : x + w,
+      y,
+      size,
+      mirrored,
+    });
+  }
+  if (pos.length === 0) return [];
 
-    if (prev) {
-      if (Math.abs(y - prev.y) > size * 0.5) {
-        pushLine(); // jumped to another visual line
-      } else {
-        const gap = rtl ? prev.endX - x : x - prev.endX;
-        if (gap > size * 0.18) line += ' ';
+  // reading order: top of page first (PDF y grows upward)
+  pos.sort((p, q) => q.y - p.y);
+
+  const lines: string[] = [];
+  let i = 0;
+  while (i < pos.length) {
+    const lineItems: Placed[] = [pos[i]];
+    const lineY = pos[i].y;
+    const lineSize = pos[i].size;
+    let j = i + 1;
+    while (j < pos.length && Math.abs(pos[j].y - lineY) <= lineSize * 0.6) {
+      lineItems.push(pos[j]);
+      j++;
+    }
+    i = j;
+
+    // direction detection
+    let arabicChars = 0;
+    let totalChars = 0;
+    let mirroredCount = 0;
+    for (const it of lineItems) {
+      if (it.mirrored) mirroredCount++;
+      for (const ch of it.str) {
+        totalChars++;
+        if (isArabicChar(ch)) arabicChars++;
       }
     }
-    line += it.str;
-    prev = { endX, size, y, rtl };
-    if (it.hasEOL) pushLine();
+    const rtl = arabicChars > totalChars * 0.4 || mirroredCount > lineItems.length * 0.5;
+
+    // restore logical order from spatial positions
+    if (rtl) lineItems.sort((p, q) => q.left - p.left); // rightmost first
+    else lineItems.sort((p, q) => p.left - q.left);
+
+    // join, spacing only on real gaps
+    let line = '';
+    for (let k = 0; k < lineItems.length; k++) {
+      const cur = lineItems[k];
+      if (k > 0) {
+        const prevItem = lineItems[k - 1];
+        const gap = rtl ? prevItem.left - cur.right : cur.left - prevItem.right;
+        if (gap > cur.size * 0.18) line += ' ';
+      }
+      line += cur.str;
+    }
+    const t = line.replace(/\s{2,}/g, ' ').replace(/\u00A0/g, ' ').trim();
+    if (t) lines.push(t);
   }
-  pushLine();
   return lines;
 }
 
@@ -385,6 +440,77 @@ function repairMojibake(text: string): string {
   return text.split('\n').map(repairMojibakeLine).join('\n');
 }
 
+/* ------------------------------------------------------------------ */
+/*  reversed RTL detection & repair                                    */
+/* ------------------------------------------------------------------ */
+
+/* Arabic Presentation Forms — final vs. initial code points. Used to tell
+   whether a line of pre-shaped glyphs is stored in logical order (words
+   begin with initial forms) or reversed (words begin with final forms).  */
+const FINAL_FORMS = new Set([
+  0xfe8e, 0xfe90, 0xfe94, 0xfe96, 0xfe9a, 0xfe9e, 0xfea2, 0xfea6, 0xfeaa, 0xfeac,
+  0xfeae, 0xfeb0, 0xfeb2, 0xfeb6, 0xfeba, 0xfebe, 0xfec2, 0xfec6, 0xfeca, 0xfece,
+  0xfed2, 0xfed6, 0xfeda, 0xfede, 0xfee2, 0xfee6, 0xfeea, 0xfeee, 0xfef0, 0xfef2,
+  0xfb57, 0xfb7b, 0xfb8b, 0xfb93, 0xfef6, 0xfef8, 0xfefa, 0xfefc,
+]);
+const INITIAL_FORMS = new Set([
+  0xfe91, 0xfe97, 0xfe9b, 0xfe9f, 0xfea3, 0xfea7, 0xfeb3, 0xfeb7, 0xfebb, 0xfebf,
+  0xfec3, 0xfec7, 0xfecb, 0xfecf, 0xfed3, 0xfed7, 0xfedb, 0xfedf, 0xfee3, 0xfee7,
+  0xfeeb, 0xfef3, 0xfb58, 0xfb7c, 0xfb94,
+]);
+
+const formClass = (cp: number): 'fin' | 'init' | 'other' =>
+  FINAL_FORMS.has(cp) ? 'fin' : INITIAL_FORMS.has(cp) ? 'init' : 'other';
+
+/** group a base character with its following combining marks so a reversal
+    never strands a haraka away from the letter it belongs to */
+function graphemeGroups(s: string): string[] {
+  const groups: string[] = [];
+  for (const ch of Array.from(s)) {
+    const cp = ch.codePointAt(0) || 0;
+    const isMark =
+      (cp >= 0x064b && cp <= 0x065f) ||
+      cp === 0x0670 ||
+      (cp >= 0x06d6 && cp <= 0x06ed) ||
+      (cp >= 0x0300 && cp <= 0x036f);
+    if (isMark && groups.length) groups[groups.length - 1] += ch;
+    else groups.push(ch);
+  }
+  return groups;
+}
+
+/**
+ * Some Persian/Arabic PDFs store pre-shaped glyphs in *visual* order, so the
+ * extracted string comes back reversed (correct letter shapes, wrong order).
+ * A reversed line has its words starting with *final* forms; a correct line
+ * has them starting with *initial* forms. We only reverse when that signal is
+ * unambiguous, so already-correct text is never touched.
+ */
+function fixReversedLine(line: string): string {
+  if (!/[\uFB50-\uFDFF\uFE70-\uFEFF]/.test(line)) return line;
+  const words = line.split(/\s+/).filter(Boolean);
+  let reversed = false;
+  if (words.length >= 2) {
+    let finStart = 0;
+    let initStart = 0;
+    for (const w of words) {
+      const cls = formClass(w.codePointAt(0) || 0);
+      if (cls === 'fin') finStart++;
+      else if (cls === 'init') initStart++;
+    }
+    reversed = finStart > initStart && finStart >= 2;
+  } else if (words.length === 1) {
+    const cps = Array.from(words[0]);
+    if (cps.length >= 2) {
+      reversed =
+        formClass(cps[0].codePointAt(0) || 0) === 'fin' &&
+        formClass(cps[cps.length - 1].codePointAt(0) || 0) === 'init';
+    }
+  }
+  if (!reversed) return line;
+  return graphemeGroups(line).reverse().join('');
+}
+
 async function pdfToChapters(buf: ArrayBuffer, clean: boolean): Promise<Chapter[]> {
   const pdfjs = await import('pdfjs-dist');
   /* Load the worker engine on the main thread: the module registers
@@ -406,7 +532,8 @@ async function pdfToChapters(buf: ArrayBuffer, clean: boolean): Promise<Chapter[
     const page = await doc.getPage(i);
     const content = await page.getTextContent();
     const lines = extractPageLines(content.items as unknown as PdfTextItem[]);
-    pages.push(repairMojibake(lines.join('\n')));
+    const repaired = repairMojibake(lines.join('\n'));
+    pages.push(repaired.split('\n').map(fixReversedLine).join('\n'));
   }
 
   const text = pages.join('\n\n');
