@@ -12,6 +12,9 @@ const ALWAYS_NOISE = /[#*_|\\+^~`$]/g;
 
 export function cleanNoise(input: string): string {
   let t = input;
+  /* control characters (except \n and \t) — common in PDF extractions;
+     ZWNJ (U+200C) is deliberately preserved */
+  t = t.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F\u0080-\u009F]/g, '');
   /* characters that are essentially always decoration/OCR noise */
   t = t.replace(ALWAYS_NOISE, '');
   /* slash: collapse mid-word runs, drop when not tightly between word chars */
@@ -109,7 +112,9 @@ export function textToChapters(raw: string, clean = true): Chapter[] {
       const text = buffer.join('\n').trim();
       if (text) {
         const parts = text.split('\n');
-        const isVerse = parts.length > 1 && parts.every((l) => l.trim().length < 60);
+        /* verse = a handful of short lines (e.g. a couplet); long blocks of
+           short lines (wrapped PDF prose) stay plain paragraphs */
+        const isVerse = parts.length > 1 && parts.length <= 14 && parts.every((l) => l.trim().length < 45);
         current.paras.push({ text, k: isVerse ? 'v' : 'p' });
       }
       buffer = [];
@@ -290,6 +295,96 @@ export function htmlToChapters(html: string, clean = true): Chapter[] {
 /*  pdf → chapters                                                     */
 /* ------------------------------------------------------------------ */
 
+interface PdfTextItem {
+  str: string;
+  transform: number[];
+  width: number;
+  height?: number;
+  hasEOL?: boolean;
+}
+
+/**
+ * Rebuilds page lines from raw pdf.js text items:
+ *  - line breaks come from pdf.js `hasEOL` marks (y-coordinate fallback)
+ *  - a space is inserted only when a real horizontal gap exists between
+ *    items, so Persian/Arabic words are never split mid-word and joined
+ *    fragments are never glued across word boundaries
+ */
+function extractPageLines(items: PdfTextItem[]): string[] {
+  const lines: string[] = [];
+  let line = '';
+  let prev: { endX: number; size: number; y: number; rtl: boolean } | null = null;
+
+  const pushLine = () => {
+    const t = line.replace(/ {2,}/g, ' ').replace(/\u00A0/g, ' ').trim();
+    if (t) lines.push(t);
+    line = '';
+    prev = null;
+  };
+
+  for (const it of items) {
+    if (!it || typeof it.str !== 'string') continue;
+    if (it.str === '') {
+      if (it.hasEOL) pushLine();
+      continue;
+    }
+    const a = it.transform[0];
+    const b = it.transform[1];
+    const d = it.transform[3];
+    const x = it.transform[4];
+    const y = it.transform[5];
+    const size = Math.hypot(b, d) || Math.abs(a) || it.height || 1;
+    const rtl = a < 0; // mirrored text matrix → right-to-left run
+    const w = it.width > 0 ? it.width : it.str.length * size * 0.42;
+    const endX = rtl ? x - w : x + w;
+
+    if (prev) {
+      if (Math.abs(y - prev.y) > size * 0.5) {
+        pushLine(); // jumped to another visual line
+      } else {
+        const gap = rtl ? prev.endX - x : x - prev.endX;
+        if (gap > size * 0.18) line += ' ';
+      }
+    }
+    line += it.str;
+    prev = { endX, size, y, rtl };
+    if (it.hasEOL) pushLine();
+  }
+  pushLine();
+  return lines;
+}
+
+/**
+ * Repairs the classic "UTF-8 read as Latin-1" mojibake (Ø³Ù„Ø§Ù… → سلام)
+ * that many PDF producers leave behind. Tries UTF-8 first, then
+ * Windows-1256 for legacy Arabic encodings. Lines that already contain
+ * real Arabic/Persian characters — or code points outside the byte
+ * range — are left untouched.
+ */
+function repairMojibakeLine(line: string): string {
+  if (!/[\u0080-\u00FF]/.test(line)) return line;
+  const bytes: number[] = [];
+  for (let i = 0; i < line.length; i++) {
+    const code = line.charCodeAt(i);
+    if (code > 0xff) return line;
+    bytes.push(code);
+  }
+  const buf = new Uint8Array(bytes);
+  for (const enc of ['utf-8', 'windows-1256']) {
+    try {
+      const dec = new TextDecoder(enc, { fatal: true }).decode(buf);
+      if (/[\u0600-\u06FF\uFB50-\uFDFF\uFE70-\uFEFF]/.test(dec) && !dec.includes('\uFFFD')) return dec;
+    } catch {
+      /* not this encoding — try the next one */
+    }
+  }
+  return line;
+}
+
+function repairMojibake(text: string): string {
+  return text.split('\n').map(repairMojibakeLine).join('\n');
+}
+
 async function pdfToChapters(buf: ArrayBuffer, clean: boolean): Promise<Chapter[]> {
   const pdfjs = await import('pdfjs-dist');
   /* Load the worker engine on the main thread: the module registers
@@ -303,26 +398,15 @@ async function pdfToChapters(buf: ArrayBuffer, clean: boolean): Promise<Chapter[
     pdfjs.GlobalWorkerOptions.workerSrc = 'inline://main-thread';
   }
 
-  const doc = await pdfjs.getDocument({ data: new Uint8Array(buf) }).promise;
+  const pdfData = new Uint8Array(buf);
+  const doc = await pdfjs.getDocument({ "data": pdfData }).promise;
   const pages: string[] = [];
 
   for (let i = 1; i <= doc.numPages; i++) {
     const page = await doc.getPage(i);
     const content = await page.getTextContent();
-    let line = '';
-    const lines: string[] = [];
-    let lastY: number | null = null;
-    for (const item of content.items as Array<{ str: string; transform: number[] }>) {
-      const y = item.transform[5];
-      if (lastY !== null && Math.abs(y - lastY) > 2) {
-        lines.push(line);
-        line = '';
-      }
-      line += item.str + ' ';
-      lastY = y;
-    }
-    lines.push(line);
-    pages.push(lines.join('\n'));
+    const lines = extractPageLines(content.items as unknown as PdfTextItem[]);
+    pages.push(repairMojibake(lines.join('\n')));
   }
 
   const text = pages.join('\n\n');
