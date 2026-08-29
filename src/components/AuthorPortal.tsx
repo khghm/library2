@@ -1,10 +1,10 @@
 import { useMemo, useRef, useState } from 'react';
 import type { Book, Chapter } from '../lib/core';
 import { CATEGORIES, COVER_PALETTE, cx, faNum, readingWords, uid } from '../lib/core';
-import { ACCEPTED, mdToChapters, parseFile, textToChapters } from '../lib/parsers';
+import { ACCEPTED, isGenericTitle, mdToChapters, parseFile, textToChapters } from '../lib/parsers';
 import { Cover } from './BookCard';
 import CoverPicker from './CoverPicker';
-import { IconCheck, IconFeather, IconLayers, IconPencil, IconTrash, IconUpload } from './Icons';
+import { IconCheck, IconFeather, IconLayers, IconPencil, IconPlus, IconTrash, IconUpload } from './Icons';
 
 interface Props {
   uploads: Book[];
@@ -32,26 +32,57 @@ export default function AuthorPortal({ uploads, onPublish, onDelete, onEdit, toa
   const [color, setColor] = useState(COVER_PALETTE[0]);
   const [cover, setCover] = useState<string | undefined>(undefined);
   const [chapters, setChapters] = useState<Chapter[] | null>(null);
-  const [fileName, setFileName] = useState('');
+  const [fileNames, setFileNames] = useState<string[]>([]);
   const [parsing, setParsing] = useState(false);
   const [asMarkdown, setAsMarkdown] = useState(false);
   const [pasted, setPasted] = useState('');
   const [dragOver, setDragOver] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const moreRef = useRef<HTMLInputElement>(null);
 
   const words = useMemo(() => (chapters ? chapters.reduce((a, c) => a + readingWords(c.paras), 0) : 0), [chapters]);
 
-  const handleFile = async (file: File) => {
+  /** parses one or several files and merges their chapters (optionally appending) */
+  const parseFiles = async (files: File[], append: boolean) => {
+    if (!files.length) return;
     setParsing(true);
-    setFileName(file.name);
     setPasted('');
     try {
-      const chs = await parseFile(file);
-      setChapters(chs);
-      toast(`«${file.name}» پردازش شد — ${faNum(chs.length)} فصل`);
-    } catch {
-      setChapters(null);
-      toast('خطا در خواندن فایل؛ قالب دیگری امتحان کنید.');
+      let all: Chapter[] = append && chapters ? [...chapters] : [];
+      const names: string[] = append ? [...fileNames] : [];
+      let okCount = 0;
+
+      for (const file of files) {
+        try {
+          const stem = file.name.replace(/\.[^.]+$/, '');
+          let chs = await parseFile(file);
+          if (chs.length === 1 && isGenericTitle(chs[0].title)) {
+            chs = [{ ...chs[0], title: stem || chs[0].title }];
+          }
+          all = [...all, ...chs];
+          names.push(file.name);
+          okCount++;
+        } catch (err) {
+          const msg =
+            err instanceof Error && err.message === 'scanned-pdf'
+              ? `«${file.name}» اسکن‌شده است و متنِ قابل استخراج ندارد.`
+              : `خواندن «${file.name}» ناموفق بود؛ فایل سالم یا قالب دیگری امتحان کنید.`;
+          toast(msg);
+        }
+      }
+
+      if (all.length > 0) {
+        setChapters(all);
+        setFileNames(names);
+        toast(
+          okCount > 1
+            ? `${faNum(okCount)} فایل پردازش و ادغام شد — مجموعاً ${faNum(all.length)} فصل`
+            : `«${names[names.length - 1]}» پردازش شد — ${faNum(all.length)} فصل`,
+        );
+      } else if (!append) {
+        setChapters(null);
+        setFileNames([]);
+      }
     } finally {
       setParsing(false);
     }
@@ -61,7 +92,7 @@ export default function AuthorPortal({ uploads, onPublish, onDelete, onEdit, toa
     if (!pasted.trim()) return;
     const chs = asMarkdown ? mdToChapters(pasted) : textToChapters(pasted);
     setChapters(chs);
-    setFileName('');
+    setFileNames([]);
     toast(`متن پردازش شد — ${faNum(chs.length)} فصل`);
   };
 
@@ -87,7 +118,7 @@ export default function AuthorPortal({ uploads, onPublish, onDelete, onEdit, toa
       createdAt: Date.now(),
     };
     onPublish(book);
-    setTitle(''); setDesc(''); setTags(''); setChapters(null); setFileName(''); setPasted(''); setCover(undefined);
+    setTitle(''); setDesc(''); setTags(''); setChapters(null); setFileNames([]); setPasted(''); setCover(undefined);
   };
 
   const steps = [
@@ -189,15 +220,15 @@ export default function AuthorPortal({ uploads, onPublish, onDelete, onEdit, toa
 
           {/* upload zone */}
           <div className="mt-6">
-            <span className="mb-2 block text-xs font-bold text-mist-400">فایل کتاب</span>
+            <span className="mb-2 block text-xs font-bold text-mist-400">فایل کتاب <span className="font-normal text-mist-500">— یک یا چند فایل</span></span>
             <div
               onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
               onDragLeave={() => setDragOver(false)}
               onDrop={(e) => {
                 e.preventDefault();
                 setDragOver(false);
-                const f = e.dataTransfer.files?.[0];
-                if (f) handleFile(f);
+                const fs = Array.from(e.dataTransfer.files || []);
+                if (fs.length) parseFiles(fs, false);
               }}
               onClick={() => fileRef.current?.click()}
               className={cx(
@@ -208,23 +239,65 @@ export default function AuthorPortal({ uploads, onPublish, onDelete, onEdit, toa
               {parsing ? (
                 <>
                   <span className="spin-slow h-8 w-8 rounded-full border-2 border-night-500 border-t-turq-400" style={{ animationDuration: '1.2s' }} />
-                  <p className="text-sm font-bold text-turq-400">در حال خواندن و فصل‌بندیِ فایل…</p>
+                  <p className="text-sm font-bold text-turq-400">در حال خواندن و فصل‌بندیِ فایل‌ها…</p>
                 </>
-              ) : chapters && fileName ? (
+              ) : chapters && fileNames.length ? (
                 <>
                   <IconCheck size={26} className="text-turq-400" />
-                  <p className="text-sm font-bold text-mist-100">{fileName}</p>
+                  <p className="text-sm font-bold text-mist-100">
+                    {fileNames.length > 1 ? `${faNum(fileNames.length)} فایل پردازش و ادغام شد` : fileNames[0]}
+                  </p>
                   <p className="text-xs text-turq-400">{faNum(chapters.length)} فصل · {faNum(words)} واژه — آمادهٔ انتشار</p>
+                  {fileNames.length > 1 && (
+                    <div className="mt-1.5 flex max-w-full flex-wrap justify-center gap-1.5">
+                      {fileNames.slice(0, 4).map((n) => (
+                        <span key={n} className="rounded bg-night-700 px-2 py-0.5 text-[10px] text-mist-400">{n}</span>
+                      ))}
+                      {fileNames.length > 4 && <span className="text-[10px] text-mist-500">و {faNum(fileNames.length - 4)} فایل دیگر…</span>}
+                    </div>
+                  )}
                 </>
               ) : (
                 <>
                   <IconUpload size={26} className="text-mist-500" />
-                  <p className="text-sm font-bold text-mist-300">فایل را این‌جا رها کنید یا کلیک کنید</p>
-                  <p className="text-[11px] text-mist-500">TXT · Markdown · HTML · DOCX · PDF</p>
+                  <p className="text-sm font-bold text-mist-300">فایل‌ها را این‌جا رها کنید یا کلیک کنید</p>
+                  <p className="text-[11px] text-mist-500">TXT · Markdown · HTML · DOCX · PDF — می‌توانید چند فایل (مثلاً فصل‌های جداگانهٔ Markdown) را با هم انتخاب کنید</p>
                 </>
               )}
-              <input ref={fileRef} type="file" accept={ACCEPTED} className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); e.target.value = ''; }} />
+              <input
+                ref={fileRef}
+                type="file"
+                multiple
+                accept={ACCEPTED}
+                className="hidden"
+                onChange={(e) => {
+                  const fs = Array.from(e.target.files || []);
+                  if (fs.length) parseFiles(fs, false);
+                  e.target.value = '';
+                }}
+              />
             </div>
+
+            {chapters && (
+              <button
+                onClick={() => moreRef.current?.click()}
+                className="mt-2 flex items-center gap-1.5 rounded-md border border-night-500 px-3.5 py-1.5 text-[11px] font-medium text-mist-400 transition-colors hover:border-turq-500/50 hover:text-turq-400"
+              >
+                <IconPlus size={13} /> افزودن فایل‌های دیگر به همین کتاب
+              </button>
+            )}
+            <input
+              ref={moreRef}
+              type="file"
+              multiple
+              accept={ACCEPTED}
+              className="hidden"
+              onChange={(e) => {
+                const fs = Array.from(e.target.files || []);
+                if (fs.length) parseFiles(fs, true);
+                e.target.value = '';
+              }}
+            />
           </div>
 
           {/* paste fallback */}
