@@ -38,6 +38,7 @@ export default function AuthorPortal({ uploads, onPublish, onDelete, onEdit, toa
   const [pasted, setPasted] = useState('');
   const [dragOver, setDragOver] = useState(false);
   const [cleanFlag, setCleanFlag] = useState(true);
+  const [parseNote, setParseNote] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
   const moreRef = useRef<HTMLInputElement>(null);
 
@@ -48,6 +49,7 @@ export default function AuthorPortal({ uploads, onPublish, onDelete, onEdit, toa
     if (!files.length) return;
     setParsing(true);
     setPasted('');
+    setParseNote('در حال خواندن و فصل‌بندی…');
     try {
       let all: Chapter[] = append && chapters ? [...chapters] : [];
       const names: string[] = append ? [...fileNames] : [];
@@ -56,7 +58,10 @@ export default function AuthorPortal({ uploads, onPublish, onDelete, onEdit, toa
       for (const file of files) {
         try {
           const stem = file.name.replace(/\.[^.]+$/, '');
-          let chs = await parseFile(file, { clean: cleanFlag });
+          let chs = await parseFile(file, {
+            clean: cleanFlag,
+            onProgress: (_pct, note) => setParseNote(note),
+          });
           if (chs.length === 1 && isGenericTitle(chs[0].title)) {
             chs = [{ ...chs[0], title: stem || chs[0].title }];
           }
@@ -64,12 +69,9 @@ export default function AuthorPortal({ uploads, onPublish, onDelete, onEdit, toa
           names.push(file.name);
           okCount++;
         } catch (err) {
-          const msg =
-            err instanceof Error && err.message === 'scanned-pdf'
-              ? `«${file.name}» اسکن‌شده (تصویری) است و متنِ قابل استخراج ندارد.`
-              : `خواندن «${file.name}» ناموفق بود${
-                  err instanceof Error && err.message ? ` — ${err.message}` : ''
-                }`;
+          const msg = `خواندن «${file.name}» ناموفق بود${
+            err instanceof Error && err.message ? ` — ${err.message}` : ''
+          }`;
           toast(msg);
         }
       }
@@ -88,6 +90,7 @@ export default function AuthorPortal({ uploads, onPublish, onDelete, onEdit, toa
       }
     } finally {
       setParsing(false);
+      setParseNote('');
     }
   };
 
@@ -259,7 +262,7 @@ export default function AuthorPortal({ uploads, onPublish, onDelete, onEdit, toa
               {parsing ? (
                 <>
                   <span className="spin-slow h-8 w-8 rounded-full border-2 border-night-500 border-t-turq-400" style={{ animationDuration: '1.2s' }} />
-                  <p className="text-sm font-bold text-turq-400">در حال خواندن و فصل‌بندیِ فایل‌ها…</p>
+                  <p className="text-sm font-bold text-turq-400">{parseNote || 'در حال خواندن و فصل‌بندیِ فایل‌ها…'}</p>
                 </>
               ) : chapters && fileNames.length ? (
                 <>

@@ -1,39 +1,27 @@
 import type { Chapter, Para } from './core';
 import { readingWords } from './core';
 
-/* ------------------------------------------------------------------ */
-/*  text noise cleaning — strips stray symbols that pollute files      */
-/*  exported from PDFs/scanners: # * _ | \ / + $ ! - and separator     */
-/*  lines, while protecting legitimate uses (و/یا, exclamation marks,  */
-/*  hyphenated compounds, ZWNJ)                                        */
-/* ------------------------------------------------------------------ */
+/* ================================================================== */
+/*  Text noise cleaning                                                */
+/* ================================================================== */
 
 const ALWAYS_NOISE = /[#*_|\\+^~`$]/g;
 
 export function cleanNoise(input: string): string {
   let t = input;
-  /* control characters (except \n and \t) — common in PDF extractions;
-     ZWNJ (U+200C) is deliberately preserved */
-  t = t.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F\u0080-\u009F]/g, '');
-  /* characters that are essentially always decoration/OCR noise */
   t = t.replace(ALWAYS_NOISE, '');
-  /* slash: collapse mid-word runs, drop when not tightly between word chars */
   t = t.replace(/([\p{L}\p{N}])\/{2,}(?=[\p{L}\p{N}])/gu, '$1/');
   t = t.replace(/(^|[^\p{L}\p{N}])\/+(?=[\p{L}\p{N}])/gu, '$1');
   t = t.replace(/\/+(?![\p{L}\p{N}])/gu, '');
-  /* hyphen: drop runs (---, --) and standalone hyphens; keep single mid-word */
   t = t.replace(/-{2,}/g, '');
   t = t.replace(/(^|[^\p{L}\p{N}])-+(?=[\p{L}\p{N}])/gu, '$1');
   t = t.replace(/-+(?![\p{L}\p{N}])/gu, '');
-  /* exclamation: keep only directly after a word, collapse !!! → ! */
   t = t.replace(/!{2,}/g, '!');
   t = t.replace(/(^|[^\p{L}\p{N}])!+/gu, '$1');
-  /* tidy horizontal whitespace (ZWNJ is preserved) */
   t = t.replace(/[ \t]{2,}/g, ' ');
   return t.trim();
 }
 
-/** a line made only of symbols — or a lone page number — is noise */
 export function isNoiseLine(line: string): boolean {
   const t = line.trim();
   if (!t) return true;
@@ -53,33 +41,27 @@ function finalize(chapters: Chapter[], clean: boolean): Chapter[] {
     .filter((c) => c.paras.length > 0);
 }
 
-/* ------------------------------------------------------------------ */
-/*  heading detection                                                  */
-/* ------------------------------------------------------------------ */
+/* ================================================================== */
+/*  Heading detection                                                  */
+/* ================================================================== */
 
-/** standalone structural words that are headings by themselves */
 const SOLO_HEADINGS =
   /^(مقدمه|پیشگفتار|درآمد|سرآغاز|دیباچه|آغاز|خاتمه|مؤخره|سخن پایانی|پیوست|پیوست‌ها|منابع|مآخذ|فهرست مطالب|فهرست|یادداشت مؤلف|یادداشت مترجم|دربارهٔ مؤلف|درباره مؤلف)$/;
 
-/** classic Persian section openers: «فصل سوم»، «بخش ۲»، «گفتار یکم»… */
 const SECTION_WORDS = /^(فصل|بخش|باب|قسمت|پرده|گفتار|مجلس|درس|مقاله)\s+/;
-
 const LATIN_SECTIONS = /^(chapter|part|preface|introduction|appendix|book|section)\s*[.:ـ]?\s*/i;
-
-/** numbered headings: «۱.»، «2)»، «۳ـ»، «(۴)» followed by a letter */
 const NUMBERED = /^[([]?\s*[۰-۹0-9]+\s*[.):ـ\-–—]\s*\p{L}/u;
-
-/** short Roman-numeral lines: «III»، «XII.» */
 const ROMAN = /^\(?[IVXLC]+\)?\s*[.):]?\s*$/;
 
 function textHeading(t: string): boolean {
   if (!t || t.length > 60) return false;
-  if (SECTION_WORDS.test(t)) return true;
-  if (SOLO_HEADINGS.test(t)) return true;
-  if (LATIN_SECTIONS.test(t)) return true;
-  if (NUMBERED.test(t)) return true;
-  if (ROMAN.test(t)) return true;
-  return false;
+  return (
+    SECTION_WORDS.test(t) ||
+    SOLO_HEADINGS.test(t) ||
+    LATIN_SECTIONS.test(t) ||
+    NUMBERED.test(t) ||
+    ROMAN.test(t)
+  );
 }
 
 function looksLikeHeading(line: string): boolean {
@@ -92,14 +74,13 @@ function stripMdHeading(line: string): string {
   return line.trim().replace(/^#{1,4}\s+/, '').replace(/[*_`]/g, '');
 }
 
-/** generic titles that get replaced by the file name during import */
 export function isGenericTitle(title: string): boolean {
   return title === 'متن کتاب' || title === 'آغاز کتاب';
 }
 
-/* ------------------------------------------------------------------ */
-/*  plain text → chapters                                              */
-/* ------------------------------------------------------------------ */
+/* ================================================================== */
+/*  Plain text / markdown / html → chapters                            */
+/* ================================================================== */
 
 export function textToChapters(raw: string, clean = true): Chapter[] {
   const lines = raw.replace(/\r\n/g, '\n').split('\n');
@@ -112,8 +93,6 @@ export function textToChapters(raw: string, clean = true): Chapter[] {
       const text = buffer.join('\n').trim();
       if (text) {
         const parts = text.split('\n');
-        /* verse = a handful of short lines (e.g. a couplet); long blocks of
-           short lines (wrapped PDF prose) stay plain paragraphs */
         const isVerse = parts.length > 1 && parts.length <= 14 && parts.every((l) => l.trim().length < 45);
         current.paras.push({ text, k: isVerse ? 'v' : 'p' });
       }
@@ -149,11 +128,6 @@ export function textToChapters(raw: string, clean = true): Chapter[] {
   return finalize(out, clean);
 }
 
-/* ------------------------------------------------------------------ */
-/*  markdown → chapters                                                */
-/* ------------------------------------------------------------------ */
-
-/** minimal markdown-ish inline renderer → safe HTML string (escapes first) */
 export function inlineMd(text: string): string {
   const esc = text
     .replace(/&/g, '&amp;')
@@ -215,11 +189,6 @@ export function mdToChapters(md: string, clean = true): Chapter[] {
   return finalize(out, clean);
 }
 
-/* ------------------------------------------------------------------ */
-/*  html / docx → chapters                                             */
-/* ------------------------------------------------------------------ */
-
-/** a paragraph that is *entirely* bold and short behaves like a heading */
 function isBoldHeading(el: Element): boolean {
   const text = (el.textContent || '').trim();
   if (!text || text.length > 60) return false;
@@ -247,8 +216,6 @@ export function htmlToChapters(html: string, clean = true): Chapter[] {
     chapters.push(current);
   };
 
-  /* documents that already carry real heading tags are trusted as-is;
-     documents without any h1–h6 fall back to pattern/bold heuristics */
   const hasRealHeadings = !!body.querySelector('h1, h2, h3, h4, h5, h6');
 
   const walk = (root: Element) => {
@@ -291,37 +258,17 @@ export function htmlToChapters(html: string, clean = true): Chapter[] {
   return out.length ? finalize(out, clean) : textToChapters(body.textContent || '', clean);
 }
 
-/* ------------------------------------------------------------------ */
-/*  pdf → chapters                                                     */
-/* ------------------------------------------------------------------ */
+/* ================================================================== */
+/*  PDF → chapters                                                     */
+/*                                                                     */
+/*  A two-stage strategy:                                              */
+/*   1) Fast path — pdf.js text extraction, cleaned and normalized.    */
+/*   2) Fallback — if the extracted text fails a Persian/Arabic        */
+/*      quality check (broken ToUnicode fonts, scanned pages), the     */
+/*      pages are rendered to images and read with OCR.                */
+/* ================================================================== */
 
-interface PdfTextItem {
-  str: string;
-  transform: number[];
-  width: number;
-  height?: number;
-  hasEOL?: boolean;
-}
-
-function isArabicChar(ch: string): boolean {
-  const c = ch.codePointAt(0) || 0;
-  return (
-    (c >= 0x0600 && c <= 0x06ff) ||
-    (c >= 0x0750 && c <= 0x077f) ||
-    (c >= 0x08a0 && c <= 0x08ff) ||
-    (c >= 0xfb50 && c <= 0xfdff) ||
-    (c >= 0xfe70 && c <= 0xfeff)
-  );
-}
-
-/* --- presentation-form normalization ----------------------------------
-   Many Persian/Arabic PDFs store *pre-shaped* glyphs (U+FB50–FDFF and
-   U+FE70–FEFF) instead of base letters. That breaks joining the moment
-   the text is reordered, and leaves odd isolated forms (ﻫ instead of a
-   joined ه). We convert every presentation form back to its base letter
-   and let the browser's own Arabic shaper do the joining correctly.     */
-
-/** Arabic Presentation Forms-B: [start, count, baseCodePoint] */
+/** Arabic Presentation Forms-B → base letter. [start, count, base] */
 const FORM_B_TABLE: Array<[number, number, number]> = [
   [0xfe70, 2, 0x064b], [0xfe72, 1, 0x064c], [0xfe74, 1, 0x064d],
   [0xfe76, 2, 0x064e], [0xfe78, 2, 0x064f], [0xfe7a, 2, 0x0650],
@@ -334,13 +281,14 @@ const FORM_B_TABLE: Array<[number, number, number]> = [
   [0xfea7, 2, 0x0630], [0xfea9, 2, 0x0631], [0xfeab, 2, 0x0632],
   [0xfead, 4, 0x0633], [0xfeb1, 4, 0x0634], [0xfeb5, 4, 0x0635],
   [0xfeb9, 4, 0x0636], [0xfebd, 4, 0x0637], [0xfec1, 4, 0x0638],
-  [0xfec5, 4, 0x0639], [0xfec9, 4, 0x063a], [0xfed1, 4, 0x0641],
-  [0xfed5, 4, 0x0642], [0xfed9, 4, 0x0643], [0xfedd, 4, 0x0644],
-  [0xfee1, 4, 0x0645], [0xfee5, 4, 0x0646], [0xfee9, 4, 0x0647],
-  [0xfeed, 2, 0x0648], [0xfeef, 2, 0x0649], [0xfef1, 4, 0x064a],
+  [0xfec5, 4, 0x0639], [0xfec9, 4, 0x063a],
+  [0xfed1, 4, 0x0641], [0xfed5, 4, 0x0642], [0xfed9, 4, 0x0643],
+  [0xfedd, 4, 0x0644], [0xfee1, 4, 0x0645], [0xfee5, 4, 0x0646],
+  [0xfee9, 4, 0x0647], [0xfeed, 2, 0x0648], [0xfeef, 2, 0x0649],
+  [0xfef1, 4, 0x064a],
 ];
 
-/** Arabic Presentation Forms-A: [start, count, baseCodePoint] — common Persian/Arabic letters */
+/** Arabic Presentation Forms-A → base letter (common Persian/Arabic). */
 const FORM_A_TABLE: Array<[number, number, number]> = [
   [0xfb50, 2, 0x0671], [0xfb52, 4, 0x067b], [0xfb56, 4, 0x067e],
   [0xfb5a, 4, 0x0680], [0xfb5e, 4, 0x0679], [0xfb62, 4, 0x067a],
@@ -360,7 +308,7 @@ const FORM_LIGATURES: Record<number, string> = {
   0xfefb: '\u0644\u0622', 0xfefc: '\u0644\u0622',
   0xfdf2: '\u0627\u0644\u0644\u0647',
   0xfdfc: '\u0631\u06cc\u0627\u0644',
-  0xfdfd: '\u0628\u0633\u0645 \u0627\u0644\u0644\u0647 \u0627\u0644\u0631\u062d\u0645\u0646 \u0627\u0644\u0631\u062d\u064a\u0645',
+  0xfdfd: '\u0628\u0633\u0645 \u0627\u0644\u0644\u0647 \u0627\u0644\u0631\u062d\u0645\u0646 \u0627\u0644\u0631\u062d\u06cc\u0645',
 };
 
 let FORMS_MAP: Map<number, string> | null = null;
@@ -386,113 +334,21 @@ function isCombiningMark(cp: number): boolean {
   );
 }
 
-/** normalize one raw PDF string: forms → base letters, drop tatweel/ZWJ/PUA */
+/** Presentation forms → base letters; drop tatweel / ZWJ / PUA symbols. */
 function normalizePdfText(s: string): string {
   const map = formsMap();
   let out = '';
   for (const ch of s) {
     const cp = ch.codePointAt(0) || 0;
-    if (cp === 0x0640) continue; // tatweel — justification artifact, never meaningful
-    if (cp === 0x200d) continue; // ZWJ — base letters are shaped by the browser now
-    if (cp === 0xfe71 || cp === 0xfe73) continue; // tatweel fragments
+    if (cp === 0x0640) continue; // tatweel (justification artifact)
+    if (cp === 0x200d) continue; // ZWJ
     if (cp >= 0xe000 && cp <= 0xf8ff) continue; // Private Use Area font symbols
     out += map.get(cp) ?? ch;
   }
   return out;
 }
 
-/**
- * PDFs that lay references like «(الأمالی، ص 570)» out in pure visual LTR
- * order leave the brackets on the wrong side once the line is re-assembled
- * right-to-left. When an RTL line opens with a closing bracket (or ends with
- * an opening one) we mirror every bracket pair in that line.
- */
-function flipBrackets(line: string): string {
-  const t = line.trim();
-  if (!/^[)\]}»]/.test(t) && !/[(\[{«]$/.test(t)) return line;
-  const swap: Record<string, string> = { '(': ')', ')': '(', '[': ']', ']': '[', '{': '}', '}': '{' };
-  return Array.from(line).map((c) => swap[c] ?? c).join('');
-}
-
-interface Placed {
-  str: string;
-  left: number;
-  right: number;
-  y: number;
-  size: number;
-  mirrored: boolean;
-  eolBefore: boolean;
-}
-
-interface FloatingMark {
-  marks: string;
-  x: number;
-  y: number;
-}
-
-/**
- * Rebuilds page text from raw pdf.js items, spatially — the key to fixing
- * Persian/Arabic PDFs whose content stream stores glyphs in *visual* order
- * (correct on screen, reversed in the stream). pdf.js hands items back in
- * stream order, so we:
- *   1. group items into visual lines by their y coordinate (top → bottom),
- *   2. detect each line's direction (majority Arabic script, or mirrored
- *      text matrices),
- *   3. sort the line's items by real x position — rightmost first for RTL —
- *      which restores both word order *and* letter order inside words,
- *   4. insert a space only where a genuine horizontal gap exists, so words
- *      are never split or wrongly glued.
- */
-function extractPageLines(items: PdfTextItem[]): string[] {
-  const rawLines: string[] = [];
-  let rawLine = '';
-  let prev: { left: number; right: number; size: number } | null = null;
-
-  const flush = () => {
-    const t = rawLine.replace(/\s{2,}/g, ' ').replace(/\u00A0/g, ' ').trim();
-    if (t) rawLines.push(t);
-    rawLine = '';
-    prev = null;
-  };
-
-  for (const it of items) {
-    if (!it || typeof it.str !== 'string') continue;
-    if (it.str === '') {
-      if (it.hasEOL) flush();
-      continue;
-    }
-    const size =
-      Math.hypot(it.transform[1], it.transform[3]) ||
-      Math.abs(it.transform[0]) ||
-      it.height ||
-      10;
-    const w = it.width > 0 ? it.width : it.str.length * size * 0.42;
-    const mirrored = it.transform[0] < 0;
-    const left = mirrored ? it.transform[4] - w : it.transform[4];
-    const right = mirrored ? it.transform[4] : it.transform[4] + w;
-
-    if (prev) {
-      // a genuine horizontal gap marks a word boundary (works LTR and RTL)
-      const gap = Math.max(left - prev.right, prev.left - right);
-      if (gap > size * 0.18) rawLine += ' ';
-    }
-    // keep the raw string — presentation forms stay intact so the
-    // reversed-word detector below can use them as its signal
-    rawLine += it.str;
-    prev = { left, right, size };
-    if (it.hasEOL) flush();
-  }
-  flush();
-  return rawLines;
-}
-
-/**
- * Repairs the classic "UTF-8 read as Latin-1" mojibake (Ø³Ù„Ø§Ù… → سلام)
- * that many PDF producers leave behind. Tries UTF-8 first, then
- * Windows-1256 for legacy Arabic encodings. Lines that already contain
- * real Arabic/Persian characters — or code points outside the byte
- * range — are left untouched.
- */
+/** Repair "UTF-8 read as Latin-1" mojibake (Ø³Ù„Ø§Ù… → سلام). */
 function repairMojibakeLine(line: string): string {
   if (!/[\u0080-\u00FF]/.test(line)) return line;
   const bytes: number[] = [];
@@ -507,7 +363,7 @@ function repairMojibakeLine(line: string): string {
       const dec = new TextDecoder(enc, { fatal: true }).decode(buf);
       if (/[\u0600-\u06FF\uFB50-\uFDFF\uFE70-\uFEFF]/.test(dec) && !dec.includes('\uFFFD')) return dec;
     } catch {
-      /* not this encoding — try the next one */
+      /* try next */
     }
   }
   return line;
@@ -517,116 +373,234 @@ function repairMojibake(text: string): string {
   return text.split('\n').map(repairMojibakeLine).join('\n');
 }
 
-/* ------------------------------------------------------------------ */
-/*  reversed RTL detection & repair                                    */
-/* ------------------------------------------------------------------ */
+interface PdfTextItem {
+  str: string;
+  transform: number[];
+  width: number;
+  height?: number;
+  hasEOL?: boolean;
+}
 
-/* Arabic Presentation Forms — final vs. initial code points. Used to tell
-   whether a line of pre-shaped glyphs is stored in logical order (words
-   begin with initial forms) or reversed (words begin with final forms).  */
-const FINAL_FORMS = new Set([
-  0xfe8e, 0xfe90, 0xfe94, 0xfe96, 0xfe9a, 0xfe9e, 0xfea2, 0xfea6, 0xfeaa, 0xfeac,
-  0xfeae, 0xfeb0, 0xfeb2, 0xfeb6, 0xfeba, 0xfebe, 0xfec2, 0xfec6, 0xfeca, 0xfece,
-  0xfed2, 0xfed6, 0xfeda, 0xfede, 0xfee2, 0xfee6, 0xfeea, 0xfeee, 0xfef0, 0xfef2,
-  0xfb57, 0xfb7b, 0xfb8b, 0xfb93, 0xfef6, 0xfef8, 0xfefa, 0xfefc,
-]);
-const INITIAL_FORMS = new Set([
-  0xfe91, 0xfe97, 0xfe9b, 0xfe9f, 0xfea3, 0xfea7, 0xfeb3, 0xfeb7, 0xfebb, 0xfebf,
-  0xfec3, 0xfec7, 0xfecb, 0xfecf, 0xfed3, 0xfed7, 0xfedb, 0xfedf, 0xfee3, 0xfee7,
-  0xfeeb, 0xfef3, 0xfb58, 0xfb7c, 0xfb94,
-]);
-
-const formClass = (cp: number): 'fin' | 'init' | 'other' =>
-  FINAL_FORMS.has(cp) ? 'fin' : INITIAL_FORMS.has(cp) ? 'init' : 'other';
-
-/** group a base character with its following combining marks so a reversal
-    never strands a haraka away from the letter it belongs to */
-function graphemeGroups(s: string): string[] {
-  const groups: string[] = [];
-  for (const ch of Array.from(s)) {
-    const cp = ch.codePointAt(0) || 0;
-    const isMark =
-      (cp >= 0x064b && cp <= 0x065f) ||
-      cp === 0x0670 ||
-      (cp >= 0x06d6 && cp <= 0x06ed) ||
-      (cp >= 0x0300 && cp <= 0x036f);
-    if (isMark && groups.length) groups[groups.length - 1] += ch;
-    else groups.push(ch);
-  }
-  return groups;
+interface Placed {
+  str: string;
+  left: number;
+  right: number;
+  y: number;
+  size: number;
 }
 
 /**
- * Some Persian/Arabic PDFs store pre-shaped glyphs in *visual* order. Spatial
- * sorting (above) already restores the *word* order, but the letters inside
- * each word remain reversed. A word whose first glyph is a *final* form is a
- * reversed word (a correct word begins with an initial/isolated form). When
- * the majority of a line's words show that signal we reverse the letters of
- * EACH WORD — never the whole line, so word order stays put. Runs on the raw
- * string, before normalization strips the presentation forms it relies on.
+ * Group raw pdf.js items into visual lines and rebuild each line in reading
+ * order. pdf.js already returns items in a sensible order for well-formed
+ * PDFs; the spatial sort below is a *safe* correction that is a no-op for
+ * logical-order files (items already flow right-to-left) and fixes files
+ * whose stream stores glyphs in visual order.
  */
-function fixReversedWords(line: string): string {
-  if (!/[\uFB50-\uFDFF\uFE70-\uFEFF]/.test(line)) return line;
-  const words = line.split(/\s+/).filter((w) => Array.from(w).length >= 2);
-  if (words.length < 2) return line;
-  let finStart = 0;
-  let initStart = 0;
-  for (const w of words) {
-    const cls = formClass(w.codePointAt(0) || 0);
-    if (cls === 'fin') finStart++;
-    else if (cls === 'init') initStart++;
+function extractPdfLines(items: PdfTextItem[]): string[] {
+  const pos: Placed[] = [];
+  for (const it of items) {
+    if (!it || typeof it.str !== 'string' || it.str === '') continue;
+    const size =
+      Math.hypot(it.transform[1], it.transform[3]) ||
+      Math.abs(it.transform[0]) ||
+      it.height ||
+      10;
+    const w = it.width > 0 ? it.width : it.str.length * size * 0.42;
+    const mirrored = it.transform[0] < 0;
+    pos.push({
+      str: it.str, // kept raw — normalization happens after ordering is settled
+      left: mirrored ? it.transform[4] - w : it.transform[4],
+      right: mirrored ? it.transform[4] : it.transform[4] + w,
+      y: it.transform[5],
+      size,
+    });
   }
-  // Overwhelming evidence only: a correctly-ordered RTL line starts its
-  // joining-letter words with initial forms, a reversed line with final
-  // forms. Require several final-form starts and essentially no initial
-  // forms, so well-formed text is never touched.
-  const reversed = finStart >= 2 && initStart === 0;
-  if (!reversed) return line;
-  // reverse the graphemes of every word in place (keeps harakat attached,
-  // keeps whitespace and word order untouched)
-  return line.replace(/\S+/g, (w) => graphemeGroups(w).reverse().join(''));
+  if (pos.length === 0) return [];
+
+  pos.sort((p, q) => q.y - p.y); // top of page first (PDF y grows upward)
+
+  const lines: string[] = [];
+  let i = 0;
+  while (i < pos.length) {
+    const lineItems: Placed[] = [pos[i]];
+    const lineY = pos[i].y;
+    const lineSize = pos[i].size;
+    let j = i + 1;
+    while (j < pos.length && Math.abs(pos[j].y - lineY) <= lineSize * 0.6) {
+      lineItems.push(pos[j]);
+      j++;
+    }
+    i = j;
+
+    /* direction: mostly Arabic script → right-to-left reading order */
+    let arabic = 0;
+    let total = 0;
+    for (const it of lineItems) {
+      for (const ch of it.str) {
+        total++;
+        const cp = ch.codePointAt(0) || 0;
+        if (
+          (cp >= 0x0600 && cp <= 0x06ff) ||
+          (cp >= 0x0750 && cp <= 0x077f) ||
+          (cp >= 0xfb50 && cp <= 0xfdff) ||
+          (cp >= 0xfe70 && cp <= 0xfeff)
+        ) {
+          arabic++;
+        }
+      }
+    }
+    const rtl = total > 0 && arabic > total * 0.4;
+
+    /* restore reading order from real positions. For an already-correct
+       logical RTL line the items sit at decreasing x, so "rightmost first"
+       reproduces the existing order exactly (a no-op). For a visual-order
+       line it reverses them into the correct order. */
+    if (rtl) lineItems.sort((p, q) => q.left - p.left);
+    else lineItems.sort((p, q) => p.left - q.left);
+
+    let line = '';
+    for (let k = 0; k < lineItems.length; k++) {
+      const cur = lineItems[k];
+      if (k > 0) {
+        const prev = lineItems[k - 1];
+        const gap = rtl ? prev.left - cur.right : cur.left - prev.right;
+        if (gap > cur.size * 0.18) line += ' ';
+      }
+      line += cur.str;
+    }
+    const t = line.replace(/\s{2,}/g, ' ').replace(/\u00A0/g, ' ').trim();
+    if (t) lines.push(t);
+  }
+  return lines;
 }
 
-async function pdfToChapters(buf: ArrayBuffer, clean: boolean): Promise<Chapter[]> {
+/**
+ * Quality check: a real Persian/Arabic text always contains a handful of
+ * very frequent short words. A PDF whose font ToUnicode map is broken yields
+ * Arabic-looking letters that never form these words, so we can detect it
+ * and fall back to OCR instead of showing garbage.
+ */
+const PERSIAN_STOPWORDS = [
+  'و', 'در', 'به', 'از', 'که', 'این', 'را', 'با', 'است', 'برای', 'آن', 'بر', 'تا', 'کرد', 'می', 'ها', 'خود', 'یا', 'هم', 'بود',
+  'ال', 'في', 'من', 'على', 'ان', 'عن', 'لا', 'ما', 'هو', 'التي', 'الذي',
+];
+
+/**
+ * 0..1 — how much the text looks like real Persian/Arabic prose. Real prose
+ * has 15–40% high-frequency stopwords; text from a broken font encoding is
+ * near 0. We count the multi-letter stopwords (strong signal, nearly
+ * impossible to hit by accident) plus the ubiquitous single letters.
+ */
+export function arabicTextQuality(text: string): number {
+  const words = text.split(/\s+/).filter(Boolean);
+  if (words.length < 20) return words.length === 0 ? 0 : 0.5;
+  let hits = 0;
+  for (const w of words) {
+    const bare = w
+      .replace(/[.,،؛:!؟?؛"«»()[\]{}ـ\u064B-\u065F\u0670\u200c]/g, '')
+      .replace(/^[''`]+|[''`]+$/g, '');
+    if (bare && PERSIAN_STOPWORDS.includes(bare)) hits++;
+  }
+  return hits / words.length;
+}
+
+/** Load pdf.js with the worker running on the main thread. */
+async function getPdfJs() {
   const pdfjs = await import('pdfjs-dist');
-  /* Load the worker engine on the main thread: the module registers
-     globalThis.pdfjsWorker, so pdf.js skips spawning a separate worker
-     file entirely and parses in-thread — this works in every hosting
-     environment, even where module workers are blocked. */
   if (!(globalThis as { pdfjsWorker?: unknown }).pdfjsWorker) {
     await import('pdfjs-dist/build/pdf.worker.min.mjs');
   }
   if (!pdfjs.GlobalWorkerOptions.workerSrc) {
     pdfjs.GlobalWorkerOptions.workerSrc = 'inline://main-thread';
   }
+  return pdfjs;
+}
 
-  const pdfData = new Uint8Array(buf);
-  const doc = await pdfjs.getDocument({ "data": pdfData }).promise;
+/** Fast path: extract the embedded text layer. */
+async function pdfTextExtract(buf: ArrayBuffer): Promise<string> {
+  const pdfjs = await getPdfJs();
+  const doc = await pdfjs.getDocument({ data: new Uint8Array(buf) }).promise;
   const pages: string[] = [];
-
   for (let i = 1; i <= doc.numPages; i++) {
     const page = await doc.getPage(i);
     const content = await page.getTextContent();
-    const rawLines = extractPageLines(content.items as unknown as PdfTextItem[]);
-    const ordered = rawLines.map(fixReversedWords); // still raw — needs the presentation forms
-    const normalized = ordered.map(normalizePdfText); // forms → base letters
-    pages.push(repairMojibake(normalized.join('\n')));
+    const lines = extractPdfLines(content.items as unknown as PdfTextItem[]);
+    pages.push(repairMojibake(lines.map(normalizePdfText).join('\n')));
+  }
+  return pages.join('\n\n');
+}
+
+/** Fallback: render pages to images and read them with OCR. */
+async function pdfOcrExtract(
+  buf: ArrayBuffer,
+  onProgress?: (pct: number, note: string) => void,
+): Promise<string> {
+  const pdfjs = await getPdfJs();
+  const Tesseract = (await import('tesseract.js')).default;
+  onProgress?.(2, 'در حال آماده‌سازی موتور بازخوانی تصویری…');
+  const worker = await Tesseract.createWorker(['fas', 'ara'], 1, {
+    logger: (m: { status?: string; progress?: number }) => {
+      if (m.status === 'recognizing text' && typeof m.progress === 'number') {
+        onProgress?.(Math.round(m.progress * 100), 'در حال بازخوانی تصویری متن…');
+      }
+    },
+  });
+
+  const doc = await pdfjs.getDocument({ data: new Uint8Array(buf) }).promise;
+  const pages: string[] = [];
+  for (let i = 1; i <= doc.numPages; i++) {
+    onProgress?.(Math.round((i / doc.numPages) * 100), `بازخوانی صفحهٔ ${i} از ${doc.numPages}…`);
+    const page = await doc.getPage(i);
+    const viewport = page.getViewport({ scale: 2 });
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.floor(viewport.width);
+    canvas.height = Math.floor(viewport.height);
+    await page.render({ canvas, viewport }).promise;
+    const { data } = await worker.recognize(canvas);
+    if (data.text) pages.push(data.text);
+  }
+  await worker.terminate();
+  return pages.join('\n\n');
+}
+
+export class PdfNeedsOcrError extends Error {
+  constructor() {
+    super('needs-ocr');
+  }
+}
+
+async function pdfToChapters(
+  buf: ArrayBuffer,
+  clean: boolean,
+  onProgress?: (pct: number, note: string) => void,
+): Promise<Chapter[]> {
+  const text = await pdfTextExtract(buf);
+  if (text.replace(/\s+/g, '').length < 40) {
+    // no extractable text layer at all (scanned) — go straight to OCR
+    onProgress?.(5, 'متن قابل استخراج نیست؛ بازخوانی تصویری…');
+    const ocrText = await pdfOcrExtract(buf, onProgress);
+    return textToChapters(ocrText, clean);
   }
 
-  const text = pages.join('\n\n');
-  /* scanned/image PDFs (or fonts without ToUnicode) yield no extractable text */
-  if (text.replace(/\s+/g, '').length < 40) {
-    throw new Error('scanned-pdf');
+  const quality = arabicTextQuality(text);
+  if (quality < 0.03) {
+    // text came out but it's not readable Persian/Arabic (broken font
+    // encoding) — re-read the pages as images instead
+    onProgress?.(5, 'جدول فونت این PDF استاندارد نیست؛ بازخوانی تصویری…');
+    const ocrText = await pdfOcrExtract(buf, onProgress);
+    return textToChapters(ocrText, clean);
   }
+
   return textToChapters(text, clean);
 }
 
-/* ------------------------------------------------------------------ */
-/*  dispatcher                                                         */
-/* ------------------------------------------------------------------ */
+/* ================================================================== */
+/*  Dispatcher                                                         */
+/* ================================================================== */
 
 export interface ParseOptions {
   clean?: boolean;
+  onProgress?: (pct: number, note: string) => void;
 }
 
 export async function parseFile(file: File, opts?: ParseOptions): Promise<Chapter[]> {
@@ -646,16 +620,16 @@ export async function parseFile(file: File, opts?: ParseOptions): Promise<Chapte
     return htmlToChapters(res.value, clean);
   }
   if (name.endsWith('.pdf')) {
-    return pdfToChapters(await file.arrayBuffer(), clean);
+    return pdfToChapters(await file.arrayBuffer(), clean, opts?.onProgress);
   }
   return textToChapters(await file.text(), clean);
 }
 
 export const ACCEPTED = '.txt,.md,.markdown,.html,.htm,.docx,.pdf,.text,.rtf';
 
-/* ------------------------------------------------------------------ */
-/*  chapter map helpers (used by the editor)                           */
-/* ------------------------------------------------------------------ */
+/* ================================================================== */
+/*  Chapter map helpers (used by the editor)                           */
+/* ================================================================== */
 
 export interface ChapterSpan {
   title: string;
@@ -664,7 +638,6 @@ export interface ChapterSpan {
   words: number;
 }
 
-/** character ranges of chapters inside a serialized text — used to delete/rename chapters in the editor */
 export function chapterSpans(text: string): ChapterSpan[] {
   const spans: ChapterSpan[] = [];
   let offset = 0;
