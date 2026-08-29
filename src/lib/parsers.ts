@@ -314,6 +314,106 @@ function isArabicChar(ch: string): boolean {
   );
 }
 
+/* --- presentation-form normalization ----------------------------------
+   Many Persian/Arabic PDFs store *pre-shaped* glyphs (U+FB50–FDFF and
+   U+FE70–FEFF) instead of base letters. That breaks joining the moment
+   the text is reordered, and leaves odd isolated forms (ﻫ instead of a
+   joined ه). We convert every presentation form back to its base letter
+   and let the browser's own Arabic shaper do the joining correctly.     */
+
+/** Arabic Presentation Forms-B: [start, count, baseCodePoint] */
+const FORM_B_TABLE: Array<[number, number, number]> = [
+  [0xfe70, 2, 0x064b], [0xfe72, 1, 0x064c], [0xfe74, 1, 0x064d],
+  [0xfe76, 2, 0x064e], [0xfe78, 2, 0x064f], [0xfe7a, 2, 0x0650],
+  [0xfe7c, 2, 0x0651], [0xfe7e, 2, 0x0652],
+  [0xfe80, 1, 0x0621], [0xfe81, 2, 0x0622], [0xfe83, 2, 0x0623],
+  [0xfe85, 2, 0x0624], [0xfe87, 2, 0x0625], [0xfe89, 2, 0x0626],
+  [0xfe8b, 2, 0x0627], [0xfe8d, 2, 0x0628], [0xfe8f, 2, 0x0629],
+  [0xfe91, 4, 0x062a], [0xfe95, 4, 0x062b], [0xfe99, 4, 0x062c],
+  [0xfe9d, 4, 0x062d], [0xfea1, 4, 0x062e], [0xfea5, 2, 0x062f],
+  [0xfea7, 2, 0x0630], [0xfea9, 2, 0x0631], [0xfeab, 2, 0x0632],
+  [0xfead, 4, 0x0633], [0xfeb1, 4, 0x0634], [0xfeb5, 4, 0x0635],
+  [0xfeb9, 4, 0x0636], [0xfebd, 4, 0x0637], [0xfec1, 4, 0x0638],
+  [0xfec5, 4, 0x0639], [0xfec9, 4, 0x063a], [0xfed1, 4, 0x0641],
+  [0xfed5, 4, 0x0642], [0xfed9, 4, 0x0643], [0xfedd, 4, 0x0644],
+  [0xfee1, 4, 0x0645], [0xfee5, 4, 0x0646], [0xfee9, 4, 0x0647],
+  [0xfeed, 2, 0x0648], [0xfeef, 2, 0x0649], [0xfef1, 4, 0x064a],
+];
+
+/** Arabic Presentation Forms-A: [start, count, baseCodePoint] — common Persian/Arabic letters */
+const FORM_A_TABLE: Array<[number, number, number]> = [
+  [0xfb50, 2, 0x0671], [0xfb52, 4, 0x067b], [0xfb56, 4, 0x067e],
+  [0xfb5a, 4, 0x0680], [0xfb5e, 4, 0x0679], [0xfb62, 4, 0x067a],
+  [0xfb66, 4, 0x067f], [0xfb6a, 4, 0x06a4], [0xfb6e, 4, 0x06a6],
+  [0xfb72, 4, 0x0684], [0xfb76, 4, 0x0683], [0xfb7a, 4, 0x0686],
+  [0xfb7e, 4, 0x0687], [0xfb82, 4, 0x068d], [0xfb86, 2, 0x068c],
+  [0xfb8a, 2, 0x0698], [0xfb8c, 2, 0x0691], [0xfb8e, 4, 0x06a9],
+  [0xfb92, 4, 0x06af], [0xfb96, 4, 0x06b3], [0xfb9a, 4, 0x06b1],
+  [0xfb9e, 4, 0x06ba], [0xfba4, 4, 0x06c1], [0xfbae, 2, 0x06d2],
+  [0xfbfc, 4, 0x06cc],
+];
+
+const FORM_LIGATURES: Record<number, string> = {
+  0xfef5: '\u0644\u0627', 0xfef6: '\u0644\u0627',
+  0xfef7: '\u0644\u0625', 0xfef8: '\u0644\u0625',
+  0xfef9: '\u0644\u0623', 0xfefa: '\u0644\u0623',
+  0xfefb: '\u0644\u0622', 0xfefc: '\u0644\u0622',
+  0xfdf2: '\u0627\u0644\u0644\u0647',
+  0xfdfc: '\u0631\u06cc\u0627\u0644',
+  0xfdfd: '\u0628\u0633\u0645 \u0627\u0644\u0644\u0647 \u0627\u0644\u0631\u062d\u0645\u0646 \u0627\u0644\u0631\u062d\u064a\u0645',
+};
+
+let FORMS_MAP: Map<number, string> | null = null;
+function formsMap(): Map<number, string> {
+  if (!FORMS_MAP) {
+    FORMS_MAP = new Map();
+    for (const [start, count, base] of [...FORM_B_TABLE, ...FORM_A_TABLE]) {
+      for (let i = 0; i < count; i++) FORMS_MAP.set(start + i, String.fromCodePoint(base));
+    }
+    for (const [cp, s] of Object.entries(FORM_LIGATURES)) FORMS_MAP.set(Number(cp), s);
+  }
+  return FORMS_MAP;
+}
+
+function isCombiningMark(cp: number): boolean {
+  return (
+    (cp >= 0x0610 && cp <= 0x061a) ||
+    (cp >= 0x064b && cp <= 0x065f) ||
+    cp === 0x0670 ||
+    (cp >= 0x06d6 && cp <= 0x06dc) ||
+    (cp >= 0x08d3 && cp <= 0x08ff) ||
+    (cp >= 0xfe00 && cp <= 0xfe0f)
+  );
+}
+
+/** normalize one raw PDF string: forms → base letters, drop tatweel/ZWJ/PUA */
+function normalizePdfText(s: string): string {
+  const map = formsMap();
+  let out = '';
+  for (const ch of s) {
+    const cp = ch.codePointAt(0) || 0;
+    if (cp === 0x0640) continue; // tatweel — justification artifact, never meaningful
+    if (cp === 0x200d) continue; // ZWJ — base letters are shaped by the browser now
+    if (cp === 0xfe71 || cp === 0xfe73) continue; // tatweel fragments
+    if (cp >= 0xe000 && cp <= 0xf8ff) continue; // Private Use Area font symbols
+    out += map.get(cp) ?? ch;
+  }
+  return out;
+}
+
+/**
+ * PDFs that lay references like «(الأمالی، ص 570)» out in pure visual LTR
+ * order leave the brackets on the wrong side once the line is re-assembled
+ * right-to-left. When an RTL line opens with a closing bracket (or ends with
+ * an opening one) we mirror every bracket pair in that line.
+ */
+function flipBrackets(line: string): string {
+  const t = line.trim();
+  if (!/^[)\]}»]/.test(t) && !/[(\[{«]$/.test(t)) return line;
+  const swap: Record<string, string> = { '(': ')', ')': '(', '[': ']', ']': '[', '{': '}', '}': '{' };
+  return Array.from(line).map((c) => swap[c] ?? c).join('');
+}
+
 interface Placed {
   str: string;
   left: number;
@@ -321,6 +421,13 @@ interface Placed {
   y: number;
   size: number;
   mirrored: boolean;
+  eolBefore: boolean;
+}
+
+interface FloatingMark {
+  marks: string;
+  x: number;
+  y: number;
 }
 
 /**
@@ -338,24 +445,49 @@ interface Placed {
  */
 function extractPageLines(items: PdfTextItem[]): string[] {
   const pos: Placed[] = [];
+  const floating: FloatingMark[] = [];
+  let pendingBreak = false;
+
   for (const it of items) {
-    if (!it || typeof it.str !== 'string' || it.str.trim() === '') continue;
+    if (!it || typeof it.str !== 'string') continue;
+    if (it.hasEOL) pendingBreak = true;
+    if (it.str === '') continue;
+
+    const text = normalizePdfText(it.str);
+    if (!text) continue; // item was only tatweel/PUA decoration
+
+    /* diacritics stored as *standalone* items (common in Quranic/Arabic
+       typesetting) float loose and scramble spatial sorting — set them
+       aside and re-attach each to its nearest base letter later */
+    let base = '';
+    let marks = '';
+    for (const ch of text) {
+      if (base === '' && isCombiningMark(ch.codePointAt(0) || 0)) marks += ch;
+      else base += ch;
+    }
+    if (base === '') {
+      floating.push({ marks, x: it.transform[4], y: it.transform[5] });
+      continue;
+    }
+
     const a = it.transform[0];
     const b = it.transform[1];
     const d = it.transform[3];
     const x = it.transform[4];
     const y = it.transform[5];
     const size = Math.hypot(b, d) || Math.abs(a) || it.height || 10;
-    const w = it.width > 0 ? it.width : it.str.length * size * 0.42;
+    const w = it.width > 0 ? it.width : base.length * size * 0.42;
     const mirrored = a < 0;
     pos.push({
-      str: it.str,
+      str: base,
       left: mirrored ? x - w : x,
       right: mirrored ? x : x + w,
       y,
       size,
       mirrored,
+      eolBefore: pendingBreak,
     });
+    pendingBreak = false;
   }
   if (pos.length === 0) return [];
 
@@ -369,7 +501,7 @@ function extractPageLines(items: PdfTextItem[]): string[] {
     const lineY = pos[i].y;
     const lineSize = pos[i].size;
     let j = i + 1;
-    while (j < pos.length && Math.abs(pos[j].y - lineY) <= lineSize * 0.6) {
+    while (j < pos.length && !pos[j].eolBefore && Math.abs(pos[j].y - lineY) <= lineSize * 0.6) {
       lineItems.push(pos[j]);
       j++;
     }
@@ -388,21 +520,43 @@ function extractPageLines(items: PdfTextItem[]): string[] {
     }
     const rtl = arabicChars > totalChars * 0.4 || mirroredCount > lineItems.length * 0.5;
 
+    // re-attach the loose diacritics of this line to their nearest letters
+    for (let f = floating.length - 1; f >= 0; f--) {
+      const m = floating[f];
+      if (Math.abs(m.y - lineY) > lineSize * 0.6) continue;
+      let best: Placed | null = null;
+      let bestD = Infinity;
+      for (const it of lineItems) {
+        const d = m.x < it.left ? it.left - m.x : m.x > it.right ? m.x - it.right : 0;
+        if (d < bestD) {
+          bestD = d;
+          best = it;
+        }
+      }
+      if (best && bestD < lineSize * 0.9) {
+        best.str += m.marks;
+        floating.splice(f, 1);
+      }
+    }
+
     // restore logical order from spatial positions
     if (rtl) lineItems.sort((p, q) => q.left - p.left); // rightmost first
     else lineItems.sort((p, q) => p.left - q.left);
 
-    // join, spacing only on real gaps
+    // join — a space only where a real gap exists (a little extra leniency
+    // right after sentence-ending punctuation, where typesetters tighten gaps)
     let line = '';
     for (let k = 0; k < lineItems.length; k++) {
       const cur = lineItems[k];
       if (k > 0) {
         const prevItem = lineItems[k - 1];
         const gap = rtl ? prevItem.left - cur.right : cur.left - prevItem.right;
-        if (gap > cur.size * 0.18) line += ' ';
+        const endsPunct = /[.!؟؛:,،»")\]]$/.test(prevItem.str);
+        if (gap > cur.size * 0.08 || (endsPunct && gap > cur.size * 0.01)) line += ' ';
       }
       line += cur.str;
     }
+    if (rtl) line = flipBrackets(line);
     const t = line.replace(/\s{2,}/g, ' ').replace(/\u00A0/g, ' ').trim();
     if (t) lines.push(t);
   }
