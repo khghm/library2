@@ -211,6 +211,21 @@ export const IconDesk = (p: P) => (
   </I>
 );
 
+export const IconPencil = (p: P) => (
+  <I {...p}>
+    <path d="M4 20l.9-3.8L16.4 4.7a1.8 1.8 0 0 1 2.6 0l.4.4a1.8 1.8 0 0 1 0 2.6L7.8 19.1 4 20z" />
+    <path d="M14.5 6.5l3 3" />
+  </I>
+);
+
+export const IconImage = (p: P) => (
+  <I {...p}>
+    <rect x="4" y="5" width="16" height="14" rx="1.5" />
+    <circle cx="9" cy="10" r="1.4" />
+    <path d="M4.5 17l4.5-4 3.5 3 3-2.5 4 3.5" />
+  </I>
+);
+
 export const IconDownload = (p: P) => (
   <I {...p}>
     <path d="M12 4v11M7.5 10.5L12 15l4.5-4.5" />

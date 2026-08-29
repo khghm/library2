@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Ambient from './components/Ambient';
 import AuthorPortal from './components/AuthorPortal';
+import BookEditor from './components/BookEditor';
 import BookModal from './components/BookModal';
 import Header from './components/Header';
 import LibraryView from './components/LibraryView';
@@ -17,9 +18,11 @@ export default function App() {
   const [view, setView] = useState<View>('library');
   const [query, setQuery] = useState('');
   const [modal, setModal] = useState<Book | null>(null);
+  const [editing, setEditing] = useState<Book | null>(null);
   const [reader, setReader] = useState<{ book: Book; chapter: number } | null>(null);
 
   const [uploads, setUploads] = useState<Book[]>(() => load<Book[]>(KEYS.uploads, []));
+  const [edits, setEdits] = useState<Book[]>(() => load<Book[]>(KEYS.edits, []));
   const [reviews, setReviews] = useState<Review[]>(() => load<Review[]>(KEYS.reviews, seedReviews));
   const [highlights, setHighlights] = useState<Highlight[]>(() => load<Highlight[]>(KEYS.highlights, []));
   const [bookmarks, setBookmarks] = useState<Bookmark[]>(() => load<Bookmark[]>(KEYS.bookmarks, []));
@@ -31,6 +34,7 @@ export default function App() {
   const [toasts, setToasts] = useState<Toast[]>([]);
 
   useEffect(() => save(KEYS.uploads, uploads), [uploads]);
+  useEffect(() => save(KEYS.edits, edits), [edits]);
   useEffect(() => save(KEYS.reviews, reviews), [reviews]);
   useEffect(() => save(KEYS.highlights, highlights), [highlights]);
   useEffect(() => save(KEYS.bookmarks, bookmarks), [bookmarks]);
@@ -40,7 +44,14 @@ export default function App() {
 
   useEffect(() => { window.scrollTo({ top: 0 }); }, [view]);
 
-  const books = useMemo(() => [...uploads, ...seedBooks], [uploads]);
+  const books = useMemo(
+    () => [
+      ...uploads,
+      ...edits,
+      ...seedBooks.filter((s) => !edits.some((e) => e.id === s.id)),
+    ],
+    [uploads, edits],
+  );
 
   const toast = useCallback((msg: string) => {
     const id = uid();
@@ -76,6 +87,23 @@ export default function App() {
     toast(`«${b.title}» منتشر شد و در قفسه نشست 🎉`);
   }, [toast]);
 
+  const openEditor = useCallback((b: Book) => {
+    setModal(null);
+    setEditing(b);
+  }, []);
+
+  const updateBook = useCallback((b: Book) => {
+    setUploads((u) => (u.some((x) => x.id === b.id) ? u.map((x) => (x.id === b.id ? b : x)) : u));
+    setEdits((e) =>
+      seedBooks.some((s) => s.id === b.id) ? [...e.filter((x) => x.id !== b.id), b] : e,
+    );
+    setReader((r) =>
+      r && r.book.id === b.id ? { ...r, book: b, chapter: Math.min(r.chapter, b.chapters.length - 1) } : r,
+    );
+    setEditing(null);
+    toast(`تغییرات «${b.title}» ذخیره شد`);
+  }, [toast]);
+
   const deleteUpload = useCallback((id: string) => {
     setUploads((u) => u.filter((b) => b.id !== id));
     setReviews((r) => r.filter((x) => x.bookId !== id));
@@ -109,10 +137,11 @@ export default function App() {
             onRead={openReader}
             onOpen={setModal}
             onToggleShelf={toggleShelf}
+            onEdit={openEditor}
             onGoAuthors={() => setView('authors')}
           />
         ) : (
-          <AuthorPortal uploads={uploads} onPublish={publish} onDelete={deleteUpload} toast={toast} onRead={openReader} />
+          <AuthorPortal uploads={uploads} onPublish={publish} onDelete={deleteUpload} onEdit={openEditor} toast={toast} onRead={openReader} />
         )}
       </main>
 
@@ -126,7 +155,18 @@ export default function App() {
           onToggleShelf={toggleShelf}
           onAddReview={(r) => { setReviews((x) => [r, ...x]); toast('نقد شما ثبت شد — سپاس از نگاه دقیق‌تان'); }}
           onDeleteReview={(id) => setReviews((x) => x.filter((r) => r.id !== id))}
+          onEdit={openEditor}
           onDeleteBook={modal.uploaded ? deleteUpload : undefined}
+        />
+      )}
+
+      {editing && (
+        <BookEditor
+          key={editing.id}
+          book={editing}
+          onSave={updateBook}
+          onClose={() => setEditing(null)}
+          toast={toast}
         />
       )}
 

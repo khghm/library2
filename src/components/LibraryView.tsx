@@ -16,6 +16,7 @@ interface Props {
   onRead: (b: Book, chapter?: number) => void;
   onOpen: (b: Book) => void;
   onToggleShelf: (id: string) => void;
+  onEdit: (b: Book) => void;
   onGoAuthors: () => void;
 }
 
@@ -43,7 +44,7 @@ function Reveal({ children, delay = 0, className = '' }: { children: React.React
   );
 }
 
-export default function LibraryView({ books, progress, highlights, bookmarks, reviews, myShelf, query, onRead, onOpen, onToggleShelf, onGoAuthors }: Props) {
+export default function LibraryView({ books, progress, highlights, bookmarks, reviews, myShelf, query, onRead, onOpen, onToggleShelf, onEdit, onGoAuthors }: Props) {
   const [cat, setCat] = useState<string>('همه');
   const [sort, setSort] = useState<string>('rec');
 
@@ -245,6 +246,7 @@ export default function LibraryView({ books, progress, highlights, bookmarks, re
                   onOpen={onOpen}
                   onRead={(bk) => onRead(bk)}
                   onToggleShelf={onToggleShelf}
+                  onEdit={onEdit}
                 />
               </Reveal>
             ))}

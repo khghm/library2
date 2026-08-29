@@ -110,6 +110,7 @@ export function save(key: string, value: unknown) {
 
 export const KEYS = {
   uploads: 'mana:uploads',
+  edits: 'mana:edits',
   reviews: 'mana:reviews',
   highlights: 'mana:highlights',
   bookmarks: 'mana:bookmarks',
@@ -117,6 +118,8 @@ export const KEYS = {
   settings: 'mana:settings',
   myshelf: 'mana:myshelf',
 };
+
+export const COVER_PALETTE = ['#7a3b3b', '#2e5e52', '#8a6a24', '#31517a', '#6b4a72', '#4a6b35'];
 
 /* ---------------- utils ---------------- */
 
@@ -156,4 +159,64 @@ export function clamp(n: number, min: number, max: number): number {
 
 export function readingWords(paras: Para[]): number {
   return paras.reduce((acc, p) => acc + p.text.split(/\s+/).filter(Boolean).length, 0);
+}
+
+export function bookWords(b: Book): number {
+  return b.chapters.reduce((a, c) => a + readingWords(c.paras), 0);
+}
+
+/* ---------------- cover image ---------------- */
+
+/** reads an image file, crops/resizes it to 640×960 cover ratio and returns a compact data-URL */
+export function fileToCoverDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    if (!file.type.startsWith('image/')) {
+      reject(new Error('not-image'));
+      return;
+    }
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const W = 640;
+        const H = 960;
+        const canvas = document.createElement('canvas');
+        canvas.width = W;
+        canvas.height = H;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) throw new Error('no-canvas');
+        const scale = Math.max(W / img.width, H / img.height);
+        const w = img.width * scale;
+        const h = img.height * scale;
+        ctx.drawImage(img, (W - w) / 2, (H - h) / 2, w, h);
+        resolve(canvas.toDataURL('image/jpeg', 0.85));
+      } catch (e) {
+        reject(e as Error);
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error('bad-image'));
+    };
+    img.src = url;
+  });
+}
+
+/* ---------------- serialization (book ⇄ editable text) ---------------- */
+
+export function serializeChapters(chapters: Chapter[]): string {
+  return chapters
+    .map((c) => {
+      const body = c.paras
+        .map((p) => {
+          if (p.k === 'q') return p.text.split('\n').map((l) => `> ${l}`).join('\n');
+          if (p.k === 'li') return p.text.split('\n').map((l) => `- ${l}`).join('\n');
+          return p.text;
+        })
+        .join('\n\n');
+      return `## ${c.title}\n\n${body}`;
+    })
+    .join('\n\n');
 }

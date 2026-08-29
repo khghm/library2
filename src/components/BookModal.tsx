@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { Book, Review } from '../lib/core';
 import { faDigits, faNum, timeAgo, uid } from '../lib/core';
 import { Cover } from './BookCard';
-import { IconBookmark, IconClock, IconClose, IconLayers, IconOpenBook, IconQuote, IconStar, IconTrash } from './Icons';
+import { IconBookmark, IconClock, IconClose, IconLayers, IconOpenBook, IconPencil, IconQuote, IconStar, IconTrash } from './Icons';
 
 interface Props {
   book: Book;
@@ -13,6 +13,7 @@ interface Props {
   onToggleShelf: (id: string) => void;
   onAddReview: (r: Review) => void;
   onDeleteReview: (id: string) => void;
+  onEdit: (b: Book) => void;
   onDeleteBook?: (id: string) => void;
 }
 
@@ -37,7 +38,7 @@ function Stars({ value, onChange }: { value: number; onChange?: (n: number) => v
   );
 }
 
-export default function BookModal({ book, reviews, inShelf, onClose, onRead, onToggleShelf, onAddReview, onDeleteReview, onDeleteBook }: Props) {
+export default function BookModal({ book, reviews, inShelf, onClose, onRead, onToggleShelf, onAddReview, onDeleteReview, onEdit, onDeleteBook }: Props) {
   const [tab, setTab] = useState<'about' | 'reviews'>('about');
   const [name, setName] = useState('');
   const [rating, setRating] = useState(5);
@@ -102,6 +103,12 @@ export default function BookModal({ book, reviews, inShelf, onClose, onRead, onT
                 }`}
               >
                 <IconBookmark size={17} filled={inShelf} /> {inShelf ? 'در قفسهٔ شماست' : 'افزودن به قفسهٔ من'}
+              </button>
+              <button
+                onClick={() => onEdit(book)}
+                className="flex items-center justify-center gap-2 rounded-md border border-night-500 px-4 py-2.5 text-sm font-medium text-mist-400 transition-colors hover:border-gold-500/40 hover:text-gold-400"
+              >
+                <IconPencil size={16} /> ویرایش مشخصات و متن
               </button>
               {book.uploaded && onDeleteBook && (
                 <button

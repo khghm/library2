@@ -1,19 +1,19 @@
 import { useMemo, useRef, useState } from 'react';
 import type { Book, Chapter } from '../lib/core';
-import { CATEGORIES, cx, faNum, readingWords, uid } from '../lib/core';
+import { CATEGORIES, COVER_PALETTE, cx, faNum, readingWords, uid } from '../lib/core';
 import { ACCEPTED, mdToChapters, parseFile, textToChapters } from '../lib/parsers';
 import { Cover } from './BookCard';
-import { IconCheck, IconFeather, IconLayers, IconTrash, IconUpload } from './Icons';
+import CoverPicker from './CoverPicker';
+import { IconCheck, IconFeather, IconLayers, IconPencil, IconTrash, IconUpload } from './Icons';
 
 interface Props {
   uploads: Book[];
   onPublish: (b: Book) => void;
   onDelete: (id: string) => void;
+  onEdit: (b: Book) => void;
   toast: (m: string) => void;
   onRead: (b: Book) => void;
 }
-
-const PALETTE = ['#7a3b3b', '#2e5e52', '#8a6a24', '#31517a', '#6b4a72', '#4a6b35'];
 
 const FORMATS = [
   { ext: 'TXT', note: 'متن ساده؛ فصل‌ها با سطرهای «فصل…» جدا می‌شوند' },
@@ -23,13 +23,14 @@ const FORMATS = [
   { ext: 'PDF', note: 'پی‌دی‌اف؛ متن استخراج و فصل‌بندی می‌شود' },
 ];
 
-export default function AuthorPortal({ uploads, onPublish, onDelete, toast, onRead }: Props) {
+export default function AuthorPortal({ uploads, onPublish, onDelete, onEdit, toast, onRead }: Props) {
   const [title, setTitle] = useState('');
   const [author, setAuthor] = useState('');
   const [category, setCategory] = useState<string>(CATEGORIES[6]);
   const [desc, setDesc] = useState('');
   const [tags, setTags] = useState('');
-  const [color, setColor] = useState(PALETTE[0]);
+  const [color, setColor] = useState(COVER_PALETTE[0]);
+  const [cover, setCover] = useState<string | undefined>(undefined);
   const [chapters, setChapters] = useState<Chapter[] | null>(null);
   const [fileName, setFileName] = useState('');
   const [parsing, setParsing] = useState(false);
@@ -73,6 +74,7 @@ export default function AuthorPortal({ uploads, onPublish, onDelete, toast, onRe
       author: author.trim(),
       category,
       desc: desc.trim() || 'این اثر از راه درگاه نویسندگانِ کتابخانهٔ مانا منتشر شده است.',
+      cover,
       coverColor: color,
       poetry: false,
       minutes: Math.max(2, Math.round(words / 190)),
@@ -85,7 +87,7 @@ export default function AuthorPortal({ uploads, onPublish, onDelete, toast, onRe
       createdAt: Date.now(),
     };
     onPublish(book);
-    setTitle(''); setDesc(''); setTags(''); setChapters(null); setFileName(''); setPasted('');
+    setTitle(''); setDesc(''); setTags(''); setChapters(null); setFileName(''); setPasted(''); setCover(undefined);
   };
 
   const steps = [
@@ -170,19 +172,19 @@ export default function AuthorPortal({ uploads, onPublish, onDelete, toast, onRe
             </label>
           </div>
 
-          {/* cover color */}
+          {/* cover: image upload + fallback color */}
           <div className="mt-5">
-            <span className="mb-2 block text-xs font-bold text-mist-400">رنگ جلدِ اثر</span>
-            <div className="flex items-center gap-2.5">
-              {PALETTE.map((c) => (
-                <button key={c} onClick={() => setColor(c)}
-                  className={cx('h-9 w-9 rounded-md transition-transform hover:scale-110', color === c && 'ring-2 ring-offset-2 ring-offset-night-800')}
-                  style={{ background: `linear-gradient(160deg, ${c}, #101d33)`, ['--tw-ring-color' as string]: c }} aria-label={`رنگ ${c}`} />
-              ))}
-              <div className="ms-3 h-16 w-12 overflow-hidden rounded" title="پیش‌نمایش جلد">
-                <Cover book={{ id: 'prev', title: title || 'عنوان کتاب', author: author || 'نویسنده', category, desc: '', coverColor: color, minutes: 0, year: '', pages: 0, tags: [], chapters: [] }} />
-              </div>
-            </div>
+            <CoverPicker
+              title={title}
+              author={author}
+              category={category}
+              cover={cover}
+              coverColor={color}
+              onCover={setCover}
+              onColor={setColor}
+              toast={toast}
+              accent="turq"
+            />
           </div>
 
           {/* upload zone */}
@@ -294,6 +296,7 @@ export default function AuthorPortal({ uploads, onPublish, onDelete, toast, onRe
                 </div>
                 <div className="flex flex-col gap-1.5">
                   <button onClick={() => onRead(b)} className="rounded bg-turq-500/12 px-2.5 py-1 text-[11px] font-bold text-turq-400 transition-colors hover:bg-turq-500/25">خواندن</button>
+                  <button onClick={() => onEdit(b)} className="flex items-center justify-center gap-1 rounded bg-gold-500/12 px-2.5 py-1 text-[11px] font-bold text-gold-400 transition-colors hover:bg-gold-500/25"><IconPencil size={12} /> ویرایش</button>
                   <button onClick={() => onDelete(b.id)} className="flex items-center justify-center gap-1 rounded px-2 py-1 text-[11px] text-rose-500 transition-colors hover:bg-rose-500/10"><IconTrash size={12} /> حذف</button>
                 </div>
               </div>

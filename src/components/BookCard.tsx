@@ -1,6 +1,6 @@
 import type { Book, Progress } from '../lib/core';
 import { cx, faDigits, faNum } from '../lib/core';
-import { IconBookmark, IconFeather, IconOpenBook, IconStar } from './Icons';
+import { IconBookmark, IconFeather, IconOpenBook, IconPencil, IconStar } from './Icons';
 
 export function Cover({ book, className }: { book: Book; className?: string }) {
   if (book.cover) {
@@ -43,9 +43,10 @@ interface CardProps {
   onOpen: (b: Book) => void;
   onRead: (b: Book) => void;
   onToggleShelf: (id: string) => void;
+  onEdit?: (b: Book) => void;
 }
 
-export default function BookCard({ book, progress, rating, ratingCount, inShelf, onOpen, onRead, onToggleShelf }: CardProps) {
+export default function BookCard({ book, progress, rating, ratingCount, inShelf, onOpen, onRead, onToggleShelf, onEdit }: CardProps) {
   const pct = progress ? Math.round(progress.pct * 100) : 0;
   return (
     <article
@@ -78,16 +79,31 @@ export default function BookCard({ book, progress, rating, ratingCount, inShelf,
           <h3 className="truncate font-display text-lg leading-7 text-mist-100 transition-colors group-hover:text-gold-400">{book.title}</h3>
           <p className="truncate text-xs font-light text-mist-500">{book.author}</p>
         </div>
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onToggleShelf(book.id);
-          }}
-          aria-label="افزودن به قفسهٔ من"
-          className={cx('shrink-0 rounded-md p-1.5 transition-all', inShelf ? 'bg-gold-500/15 text-gold-400' : 'text-mist-500 hover:bg-night-700 hover:text-gold-400')}
-        >
-          <IconBookmark size={18} filled={inShelf} />
-        </button>
+        <div className="flex shrink-0 items-center gap-0.5">
+          {onEdit && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onEdit(book);
+              }}
+              aria-label="ویرایش کتاب"
+              title="ویرایش مشخصات و متن کتاب"
+              className="rounded-md p-1.5 text-mist-500 opacity-0 transition-all hover:bg-night-700 hover:text-gold-400 group-hover:opacity-100"
+            >
+              <IconPencil size={16} />
+            </button>
+          )}
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleShelf(book.id);
+            }}
+            aria-label="افزودن به قفسهٔ من"
+            className={cx('rounded-md p-1.5 transition-all', inShelf ? 'bg-gold-500/15 text-gold-400' : 'text-mist-500 hover:bg-night-700 hover:text-gold-400')}
+          >
+            <IconBookmark size={18} filled={inShelf} />
+          </button>
+        </div>
       </div>
 
       <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-mist-500">

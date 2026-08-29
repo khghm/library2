@@ -209,3 +209,43 @@ export async function parseFile(file: File): Promise<Chapter[]> {
 }
 
 export const ACCEPTED = '.txt,.md,.markdown,.html,.htm,.docx,.pdf,.text,.rtf';
+
+export interface ChapterSpan {
+  title: string;
+  start: number;
+  end: number;
+  words: number;
+}
+
+/** character ranges of chapters inside a serialized text — used to delete/rename chapters in the editor */
+export function chapterSpans(text: string): ChapterSpan[] {
+  const spans: ChapterSpan[] = [];
+  let offset = 0;
+  const lines = text.split('\n');
+  const starts: { title: string; start: number }[] = [];
+
+  for (const line of lines) {
+    const t = line.trim();
+    if (t && (t.startsWith('#') || /^(فصل|بخش|باب|قسمت|پرده|گفتار)\s/.test(t) || /^(chapter|part)\s/i.test(t))) {
+      starts.push({ title: t.replace(/^#{1,4}\s+/, '').slice(0, 60), start: offset });
+    }
+    offset += line.length + 1;
+  }
+
+  for (let i = 0; i < starts.length; i++) {
+    const start = starts[i].start;
+    const end = i + 1 < starts.length ? starts[i + 1].start : text.length;
+    const body = text.slice(start, end);
+    spans.push({
+      title: starts[i].title,
+      start,
+      end,
+      words: body.split(/\s+/).filter(Boolean).length,
+    });
+  }
+
+  if (spans.length === 0 && text.trim()) {
+    spans.push({ title: 'متن کتاب', start: 0, end: text.length, words: text.split(/\s+/).filter(Boolean).length });
+  }
+  return spans;
+}
