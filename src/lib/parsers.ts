@@ -343,7 +343,20 @@ function normalizePdfText(s: string): string {
     if (cp === 0x0640) continue; // tatweel (justification artifact)
     if (cp === 0x200d) continue; // ZWJ
     if (cp >= 0xe000 && cp <= 0xf8ff) continue; // Private Use Area font symbols
-    out += map.get(cp) ?? ch;
+    
+    // Try lookup in our mapping table first
+    let mapped = map.get(cp);
+    
+    // If not found and it's an Arabic presentation form, use Unicode NFKC normalization
+    // This handles non-standard or extended presentation forms not in our tables
+    if (!mapped && ((cp >= 0xfe70 && cp <= 0xfeff) || (cp >= 0xfb50 && cp <= 0xfdff))) {
+      const normalized = ch.normalize('NFKC');
+      // NFKC may expand ligatures to multiple characters, which is correct
+      out += normalized;
+      continue;
+    }
+    
+    out += mapped ?? ch;
   }
   return out;
 }
