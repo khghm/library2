@@ -2,6 +2,7 @@ import { useMemo, useRef, useState } from 'react';
 import type { Book, Chapter } from '../lib/core';
 import { CATEGORIES, COVER_PALETTE, cx, faNum, readingWords, uid } from '../lib/core';
 import { ACCEPTED, isGenericTitle, mdToChapters, parseFile, textToChapters } from '../lib/parsers';
+import { savePdf } from '../lib/blobStore';
 import { Cover } from './BookCard';
 import CoverPicker from './CoverPicker';
 import { IconCheck, IconFeather, IconLayers, IconPencil, IconPlus, IconTrash, IconUpload } from './Icons';
@@ -41,6 +42,10 @@ export default function AuthorPortal({ uploads, onPublish, onDelete, onEdit, toa
   const [parseNote, setParseNote] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
   const moreRef = useRef<HTMLInputElement>(null);
+  /* original bytes of an uploaded PDF (kept so the reader can render the
+     real pages later); only used when exactly one PDF is the source */
+  const pdfBytesRef = useRef<ArrayBuffer | null>(null);
+  const pdfCountRef = useRef(0);
 
   const words = useMemo(() => (chapters ? chapters.reduce((a, c) => a + readingWords(c.paras), 0) : 0), [chapters]);
 
@@ -51,6 +56,10 @@ export default function AuthorPortal({ uploads, onPublish, onDelete, onEdit, toa
     setPasted('');
     setParseNote('در حال خواندن و فصل‌بندی…');
     try {
+      if (!append) {
+        pdfBytesRef.current = null;
+        pdfCountRef.current = 0;
+      }
       let all: Chapter[] = append && chapters ? [...chapters] : [];
       const names: string[] = append ? [...fileNames] : [];
       let okCount = 0;
@@ -58,6 +67,11 @@ export default function AuthorPortal({ uploads, onPublish, onDelete, onEdit, toa
       for (const file of files) {
         try {
           const stem = file.name.replace(/\.[^.]+$/, '');
+          const isPdf = file.name.toLowerCase().endsWith('.pdf');
+          if (isPdf) {
+            pdfCountRef.current += 1;
+            pdfBytesRef.current = await file.arrayBuffer();
+          }
           let chs = await parseFile(file, {
             clean: cleanFlag,
             onProgress: (_pct, note) => setParseNote(note),
@@ -102,11 +116,23 @@ export default function AuthorPortal({ uploads, onPublish, onDelete, onEdit, toa
     toast(`متن پردازش شد — ${faNum(chs.length)} فصل`);
   };
 
-  const publish = () => {
+  const publish = async () => {
     if (!title.trim() || !author.trim()) return toast('عنوان و نام نویسنده لازم است.');
     if (!chapters || chapters.length === 0) return toast('ابتدا فایل کتاب را بارگذاری یا متن را پردازش کنید.');
+    const id = `up-${uid()}`;
+    /* if the source is exactly one PDF, keep the original file so the reader
+       can render the real pages (pixel-exact text, immune to broken fonts) */
+    let originalPdf = false;
+    if (pdfCountRef.current === 1 && pdfBytesRef.current) {
+      try {
+        await savePdf(id, new Blob([pdfBytesRef.current], { type: 'application/pdf' }));
+        originalPdf = true;
+      } catch {
+        /* storage unavailable — text mode still works */
+      }
+    }
     const book: Book = {
-      id: `up-${uid()}`,
+      id,
       title: title.trim(),
       author: author.trim(),
       category,
@@ -122,9 +148,12 @@ export default function AuthorPortal({ uploads, onPublish, onDelete, onEdit, toa
       uploaded: true,
       uploader: author.trim(),
       createdAt: Date.now(),
+      originalPdf,
     };
     onPublish(book);
     setTitle(''); setDesc(''); setTags(''); setChapters(null); setFileNames([]); setPasted(''); setCover(undefined);
+    pdfBytesRef.current = null;
+    pdfCountRef.current = 0;
   };
 
   const steps = [

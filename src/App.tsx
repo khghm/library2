@@ -5,6 +5,7 @@ import BookEditor from './components/BookEditor';
 import BookModal from './components/BookModal';
 import Header from './components/Header';
 import LibraryView from './components/LibraryView';
+import PdfLab from './components/PdfLab';
 import Reader from './components/Reader';
 import { IconCheck } from './components/Icons';
 import { seedBooks, seedReviews } from './data/library';
@@ -20,6 +21,7 @@ export default function App() {
   const [modal, setModal] = useState<Book | null>(null);
   const [editing, setEditing] = useState<Book | null>(null);
   const [reader, setReader] = useState<{ book: Book; chapter: number } | null>(null);
+  const [labOpen, setLabOpen] = useState(false);
 
   const [uploads, setUploads] = useState<Book[]>(() => load<Book[]>(KEYS.uploads, []));
   const [edits, setEdits] = useState<Book[]>(() => load<Book[]>(KEYS.edits, []));
@@ -122,7 +124,7 @@ export default function App() {
   return (
     <div className="min-h-screen">
       <Ambient />
-      <Header view={view} onNav={setView} onDesk={goDesk} query={query} setQuery={setQuery} />
+      <Header view={view} onNav={setView} onDesk={goDesk} query={query} setQuery={setQuery} onLab={() => setLabOpen(true)} />
 
       <main>
         {view === 'library' ? (
@@ -169,6 +171,8 @@ export default function App() {
           toast={toast}
         />
       )}
+
+      {labOpen && <PdfLab onClose={() => setLabOpen(false)} toast={toast} />}
 
       {reader && (
         <Reader

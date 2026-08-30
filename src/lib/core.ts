@@ -25,6 +25,7 @@ export interface Book {
   uploaded?: boolean;
   uploader?: string;
   createdAt?: number;
+  originalPdf?: boolean;
 }
 
 export interface Review {

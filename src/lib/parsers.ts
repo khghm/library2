@@ -488,37 +488,56 @@ function extractPdfLines(items: PdfTextItem[]): string[] {
 }
 
 /**
- * Quality check: a real Persian/Arabic text always contains a handful of
- * very frequent short words. A PDF whose font ToUnicode map is broken yields
- * Arabic-looking letters that never form these words, so we can detect it
- * and fall back to OCR instead of showing garbage.
+ * Quality check based on a dictionary of the most frequent Persian and
+ * Arabic words. Genuine prose matches many of them exactly; text produced
+ * through a broken font encoding matches almost none.
  */
-const PERSIAN_STOPWORDS = [
-  'و', 'در', 'به', 'از', 'که', 'این', 'را', 'با', 'است', 'برای', 'آن', 'بر', 'تا', 'کرد', 'می', 'ها', 'خود', 'یا', 'هم', 'بود',
-  'ال', 'في', 'من', 'على', 'ان', 'عن', 'لا', 'ما', 'هو', 'التي', 'الذي',
+
+const COMMON_WORDS_RAW = [
+  // Persian — function words & most frequent content words
+  'در', 'به', 'از', 'که', 'این', 'را', 'با', 'است', 'برای', 'آن', 'بر', 'تا', 'کرد', 'گفت', 'نیز', 'یک', 'خود', 'بود', 'شود', 'شده', 'دارد', 'دارند', 'می‌شود', 'می‌کنند', 'می‌توان', 'می‌گوید', 'می‌گویند', 'همه', 'هیچ', 'هر', 'چه', 'چرا', 'چون', 'زیرا', 'اگر', 'اما', 'ولی', 'پس', 'سپس', 'میان', 'بین', 'قبل', 'بعد', 'مثل', 'مانند', 'زیر', 'بالا', 'کنار', 'روی', 'داخل', 'خارج',
+  'انسان', 'مردم', 'جهان', 'دنیا', 'آخرت', 'زندگی', 'مرگ', 'حیات', 'روح', 'نفس', 'بدن', 'قلب', 'عقل', 'علم', 'جهل', 'ایمان', 'کفر', 'گناه', 'ثواب', 'خیر', 'شر', 'خوب', 'بد', 'زیبا', 'بزرگ', 'کوچک', 'زیاد', 'کم', 'روز', 'شب', 'سال', 'ماه', 'هفته', 'ساعت', 'امروز', 'فردا', 'دیروز', 'خدا', 'پروردگار', 'پیامبر', 'قرآن', 'نماز', 'روزه', 'دعا', 'صبر', 'شکر', 'توکل', 'اخلاق', 'رفتار', 'کردار', 'گفتار', 'کردن', 'شدن', 'بودن', 'داشتن', 'خواستن', 'توانستن', 'دانستن', 'دیدن', 'شنیدن', 'رفتن', 'آمدن', 'گرفتن', 'دادن', 'خانه', 'مدرسه', 'دانشگاه', 'مسجد', 'شهر', 'روستا', 'کشور', 'ایران', 'اسلام', 'مسلمان', 'مؤمن', 'کتاب', 'کتابخانه', 'نویسنده', 'نوشته', 'خواندن', 'خواننده', 'دانش', 'دانشمند', 'معلم', 'شاگرد', 'دانشجو', 'پدر', 'مادر', 'فرزند', 'جوان', 'پیر', 'مرد', 'زن', 'کودک', 'نوجوان', 'بزرگسال', 'دوست', 'دشمن', 'همسایه', 'جامعه', 'فرهنگ', 'تمدن', 'تاریخ', 'ادب', 'ادبیات', 'شعر', 'شاعر', 'نثر', 'هنر', 'کار', 'کوشش', 'تلاش', 'کوشش', 'امید', 'یأس', 'ناامیدی', 'شادی', 'غم', 'اندوه', 'رنج', 'درد', 'عشق', 'محبت', 'مهربانی', 'بخشش', 'گذشت', 'عدالت', 'ظلم', 'حق', 'باطل', 'حقیقت', 'واقعیت', 'آزادی', 'بردگی', 'انتخاب', 'اراده', 'تصمیم', 'عقل', 'فکر', 'اندیشه', 'تفکر', 'ذهن', 'معنا', 'مفهوم', 'هدف', 'مقصد', 'راه', 'مسیر', 'سفر', 'مسافرت', 'منزل', 'مقام', 'مرتبه', 'درجه', 'مرحله', 'قدم', 'گام',
+  // Arabic — function words & frequent words
+  'في', 'من', 'على', 'إلى', 'عن', 'أن', 'إن', 'كان', 'لا', 'ما', 'هو', 'هي', 'هم', 'الذي', 'التي', 'الذين', 'هذا', 'هذه', 'ذلك', 'تلك', 'ثم', 'أو', 'بل', 'لكن', 'حتى', 'إذا', 'إذ', 'قد', 'لقد', 'مع', 'بين', 'عند', 'فوق', 'تحت', 'كل', 'بعض', 'غير', 'الله', 'رسول', 'قال', 'يقول', 'الناس', 'الإنسان', 'الدنيا', 'الآخرة', 'الجنة', 'يوم', 'علم', 'كتاب', 'قلب', 'روح', 'نفس', 'عقل', 'حق', 'باطل', 'خير', 'شر', 'كبير', 'صغير', 'كثير', 'قليل',
 ];
 
+/** normalize a token for dictionary matching (letters unified, marks stripped) */
+function normalizeArabicToken(w: string): string {
+  return w
+    .replace(/[\u0640\u200c\u200d\ufeff]/g, '')
+    .replace(/[\u0610-\u061a\u064b-\u065f\u0670\u06d6-\u06dc]/g, '')
+    .replace(/[.,،؛:;!؟?"'«»()[\]{}ـ–—…٪٪\d۰-۹]/g, '')
+    .replace(/[أإآ]/g, 'ا')
+    .replace(/ة/g, 'ه')
+    .replace(/ى/g, 'ي')
+    .replace(/ك/g, 'ک')
+    .trim();
+}
+
+const COMMON_WORDS: Set<string> = (() => {
+  const s = new Set<string>();
+  for (const w of COMMON_WORDS_RAW) {
+    const n = normalizeArabicToken(w);
+    if (n.length >= 2) s.add(n);
+  }
+  return s;
+})();
+
 /**
- * 0..1 — how much the text looks like real Persian/Arabic prose. Real prose
- * has 15–40% high-frequency stopwords; text from a broken font encoding is
- * near 0. We count the multi-letter stopwords (strong signal, nearly
- * impossible to hit by accident) plus the ubiquitous single letters.
+ * 0..1 — share of tokens (length ≥ 2 after normalization) that are among the
+ * most frequent Persian/Arabic words. Real prose: typically 0.15–0.45.
+ * Text from a broken font encoding: near zero.
  */
 export function arabicTextQuality(text: string): number {
-  const words = text.split(/\s+/).filter(Boolean);
-  if (words.length < 20) return words.length === 0 ? 0 : 0.5;
+  const tokens = text.split(/\s+/).filter(Boolean).map(normalizeArabicToken).filter((t) => t.length >= 2);
+  if (tokens.length < 15) return tokens.length === 0 ? 0 : 0.5;
   let hits = 0;
-  for (const w of words) {
-    const bare = w
-      .replace(/[.,،؛:!؟?؛"«»()[\]{}ـ\u064B-\u065F\u0670\u200c]/g, '')
-      .replace(/^[''`]+|[''`]+$/g, '');
-    if (bare && PERSIAN_STOPWORDS.includes(bare)) hits++;
-  }
-  return hits / words.length;
+  for (const t of tokens) if (COMMON_WORDS.has(t)) hits++;
+  return hits / tokens.length;
 }
 
 /** Load pdf.js with the worker running on the main thread. */
-async function getPdfJs() {
+export async function getPdfJs() {
   const pdfjs = await import('pdfjs-dist');
   if (!(globalThis as { pdfjsWorker?: unknown }).pdfjsWorker) {
     await import('pdfjs-dist/build/pdf.worker.min.mjs');
@@ -530,9 +549,11 @@ async function getPdfJs() {
 }
 
 /** Fast path: extract the embedded text layer. */
-async function pdfTextExtract(buf: ArrayBuffer): Promise<string> {
+export async function pdfTextExtract(buf: ArrayBuffer): Promise<string> {
   const pdfjs = await getPdfJs();
-  const doc = await pdfjs.getDocument({ data: new Uint8Array(buf) }).promise;
+  /* slice() copies the buffer so pdf.js can't detach the caller's copy —
+     the same file is read twice (text path, then OCR) */
+  const doc = await pdfjs.getDocument({ data: new Uint8Array(buf.slice(0)) }).promise;
   const pages: string[] = [];
   for (let i = 1; i <= doc.numPages; i++) {
     const page = await doc.getPage(i);
@@ -544,7 +565,7 @@ async function pdfTextExtract(buf: ArrayBuffer): Promise<string> {
 }
 
 /** Fallback: render pages to images and read them with OCR. */
-async function pdfOcrExtract(
+export async function pdfOcrExtract(
   buf: ArrayBuffer,
   onProgress?: (pct: number, note: string) => void,
 ): Promise<string> {
@@ -558,28 +579,75 @@ async function pdfOcrExtract(
       }
     },
   });
+  try {
+    await (worker as unknown as { setParameters: (p: Record<string, unknown>) => Promise<unknown> }).setParameters({
+      tessedit_pageseg_mode: '6', // uniform block of text — best for book pages
+    });
+  } catch {
+    /* engine without setParameters support — continue anyway */
+  }
 
-  const doc = await pdfjs.getDocument({ data: new Uint8Array(buf) }).promise;
+  const doc = await pdfjs.getDocument({ data: new Uint8Array(buf.slice(0)) }).promise;
   const pages: string[] = [];
   for (let i = 1; i <= doc.numPages; i++) {
     onProgress?.(Math.round((i / doc.numPages) * 100), `بازخوانی صفحهٔ ${i} از ${doc.numPages}…`);
     const page = await doc.getPage(i);
-    const viewport = page.getViewport({ scale: 2 });
+    // render at ~2200px width: sharp enough for OCR without heavy memory use
+    const baseW = page.getViewport({ scale: 1 }).width;
+    const scale = Math.min(3.2, 2200 / baseW);
+    const viewport = page.getViewport({ scale });
     const canvas = document.createElement('canvas');
     canvas.width = Math.floor(viewport.width);
     canvas.height = Math.floor(viewport.height);
     await page.render({ canvas, viewport }).promise;
+
+    // pre-process: grayscale + contrast stretch (helps OCR on aged pages)
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      try {
+        const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const d = img.data;
+        const hist = new Array<number>(256).fill(0);
+        for (let p = 0; p < d.length; p += 4) {
+          const g = Math.round(d[p] * 0.299 + d[p + 1] * 0.587 + d[p + 2] * 0.114);
+          d[p] = d[p + 1] = d[p + 2] = g;
+          hist[g]++;
+        }
+        const total = d.length / 4;
+        let lo = 0;
+        let hi = 255;
+        let acc = 0;
+        for (let g = 0; g < 256; g++) {
+          acc += hist[g];
+          if (acc > total * 0.02) {
+            lo = g;
+            break;
+          }
+        }
+        acc = 0;
+        for (let g = 0; g < 256; g++) {
+          acc += hist[g];
+          if (acc > total * 0.98) {
+            hi = g;
+            break;
+          }
+        }
+        const range = Math.max(1, hi - lo);
+        for (let p = 0; p < d.length; p += 4) {
+          const v = Math.max(0, Math.min(255, Math.round(((d[p] - lo) / range) * 255)));
+          d[p] = d[p + 1] = d[p + 2] = v;
+        }
+        ctx.putImageData(img, 0, 0);
+      } catch {
+        /* OCR the raw render instead */
+      }
+    }
+
     const { data } = await worker.recognize(canvas);
     if (data.text) pages.push(data.text);
   }
   await worker.terminate();
   return pages.join('\n\n');
-}
-
-export class PdfNeedsOcrError extends Error {
-  constructor() {
-    super('needs-ocr');
-  }
 }
 
 async function pdfToChapters(
