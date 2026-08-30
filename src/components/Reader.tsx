@@ -6,6 +6,7 @@ import {
   IconBookmark, IconChevronL, IconChevronR, IconClose, IconMinus, IconMoon, IconNote,
   IconPlus, IconScroll, IconSun, IconToc, IconTrash, IconType, IconWidth,
 } from './Icons';
+import ReaderPages from './ReaderPages';
 
 interface Props {
   book: Book;
@@ -57,6 +58,9 @@ export default function Reader(props: Props) {
   const [popover, setPopover] = useState<{ id: string; x: number; y: number } | null>(null);
   const [noteDraft, setNoteDraft] = useState('');
   const [jumpTo, setJumpTo] = useState<number | null>(null);
+  /* for books uploaded as a single PDF we can render the real pages —
+     pixel-exact text regardless of how the font encodes it. Default to it. */
+  const [mode, setMode] = useState<'text' | 'pages'>(book.originalPdf ? 'pages' : 'text');
 
   const surfaceRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -291,6 +295,26 @@ export default function Reader(props: Props) {
           </p>
         </div>
 
+        {/* display mode: real PDF pages vs. extracted text */}
+        {book.originalPdf && (
+          <div className="me-1 flex items-center rounded-md border p-0.5" style={{ borderColor: 'var(--pg-line)' }}>
+            <button
+              onClick={() => setMode('pages')}
+              className={cx('rounded px-2.5 py-1 text-[11px] font-bold transition-colors', mode === 'pages' ? '' : 'hover:bg-white/5')}
+              style={mode === 'pages' ? { background: 'var(--pg-accent)', color: 'var(--pg-bg)' } : { color: 'var(--pg-muted)' }}
+            >
+              صفحه‌های اصلی
+            </button>
+            <button
+              onClick={() => setMode('text')}
+              className={cx('rounded px-2.5 py-1 text-[11px] font-bold transition-colors', mode === 'text' ? '' : 'hover:bg-white/5')}
+              style={mode === 'text' ? { background: 'var(--pg-accent)', color: 'var(--pg-bg)' } : { color: 'var(--pg-muted)' }}
+            >
+              متن
+            </button>
+          </div>
+        )}
+
         {/* quick controls */}
         <div className="flex items-center gap-1">
           <button onClick={() => onSettings({ ...settings, size: Math.max(13, settings.size - 1) })} className="rounded-md p-1.5 transition-colors hover:bg-white/5" style={{ color: 'var(--pg-muted)' }} aria-label="کوچک‌تر"><IconMinus size={16} /></button>
@@ -437,6 +461,15 @@ export default function Reader(props: Props) {
         )}
 
         {/* reading surface */}
+        {mode === 'pages' && book.originalPdf ? (
+          <div className="reader-surface min-h-0 flex-1 overflow-hidden">
+            <ReaderPages
+              bookId={book.id}
+              bookTitle={book.title}
+              onProgressPct={(pct) => onSaveProgress({ chapter, pct, updatedAt: Date.now() })}
+            />
+          </div>
+        ) : (
         <div ref={scrollRef} onScroll={handleScroll} className="reader-surface min-h-0 flex-1 overflow-y-auto">
           <div ref={surfaceRef} key={chapter} className={cx('page-in mx-auto px-5 py-10 sm:px-8 sm:py-14', widthCls)} style={{ color: 'var(--pg-text)' }}>
             {/* chapter header */}
@@ -493,6 +526,7 @@ export default function Reader(props: Props) {
             </footer>
           </div>
         </div>
+        )}
       </div>
 
       {/* selection toolbar */}

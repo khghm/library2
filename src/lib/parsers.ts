@@ -536,9 +536,11 @@ export async function getPdfJs() {
 }
 
 /** Fast path: extract the embedded text layer. */
-async function pdfTextExtract(buf: ArrayBuffer): Promise<string> {
+export async function pdfTextExtract(buf: ArrayBuffer): Promise<string> {
   const pdfjs = await getPdfJs();
-  const doc = await pdfjs.getDocument({ data: new Uint8Array(buf) }).promise;
+  /* slice() copies the buffer so pdf.js can't detach the caller's copy —
+     the same file is read twice (text path, then OCR) */
+  const doc = await pdfjs.getDocument({ data: new Uint8Array(buf.slice(0)) }).promise;
   const pages: string[] = [];
   for (let i = 1; i <= doc.numPages; i++) {
     const page = await doc.getPage(i);
@@ -550,7 +552,7 @@ async function pdfTextExtract(buf: ArrayBuffer): Promise<string> {
 }
 
 /** Fallback: render pages to images and read them with OCR. */
-async function pdfOcrExtract(
+export async function pdfOcrExtract(
   buf: ArrayBuffer,
   onProgress?: (pct: number, note: string) => void,
 ): Promise<string> {
@@ -572,7 +574,7 @@ async function pdfOcrExtract(
     /* engine without setParameters support — continue anyway */
   }
 
-  const doc = await pdfjs.getDocument({ data: new Uint8Array(buf) }).promise;
+  const doc = await pdfjs.getDocument({ data: new Uint8Array(buf.slice(0)) }).promise;
   const pages: string[] = [];
   for (let i = 1; i <= doc.numPages; i++) {
     onProgress?.(Math.round((i / doc.numPages) * 100), `بازخوانی صفحهٔ ${i} از ${doc.numPages}…`);

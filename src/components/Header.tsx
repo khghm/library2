@@ -7,9 +7,10 @@ interface Props {
   onDesk: () => void;
   query: string;
   setQuery: (q: string) => void;
+  onLab?: () => void;
 }
 
-export default function Header({ view, onNav, onDesk, query, setQuery }: Props) {
+export default function Header({ view, onNav, onDesk, query, setQuery, onLab }: Props) {
   return (
     <header className="sticky top-0 z-40 border-b border-gold-500/10 bg-night-900/85 backdrop-blur-md">
       <div className="mx-auto flex max-w-7xl items-center gap-3 px-4 py-3 sm:px-6">
@@ -57,6 +58,20 @@ export default function Header({ view, onNav, onDesk, query, setQuery }: Props) 
 
         {/* search */}
         <div className="ms-auto flex items-center gap-2">
+          {onLab && (
+            <button
+              onClick={onLab}
+              title="آزمایشگاه پردازش PDF"
+              className="group flex items-center gap-1.5 rounded-md border border-turq-500/30 bg-turq-500/10 px-3 py-2 text-xs font-bold text-turq-400 transition-all hover:border-turq-500/60 hover:bg-turq-500/20"
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" className="transition-transform group-hover:rotate-12">
+                <path d="M9 3h6" />
+                <path d="M10 3v6.2L4.8 18a2 2 0 0 0 1.8 3h10.8a2 2 0 0 0 1.8-3L14 9.2V3" />
+                <path d="M7.5 14h9" />
+              </svg>
+              <span className="hidden sm:inline">آزمایشگاه PDF</span>
+            </button>
+          )}
           <label className={cx('group relative flex items-center rounded-md border transition-all duration-300', 'border-night-500 bg-night-800/70 focus-within:border-gold-500/50 focus-within:bg-night-800', query ? 'w-44 sm:w-64' : 'w-36 sm:w-52')}>
             <IconSearch size={16} className="pointer-events-none absolute right-3 text-mist-500 transition-colors group-focus-within:text-gold-400" />
             <input
