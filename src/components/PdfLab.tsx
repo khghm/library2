@@ -1,30 +1,29 @@
 import { useRef, useState } from 'react';
 import { cx, faDigits, faNum } from '../lib/core';
 import { arabicTextQuality, getPdfJs, pdfOcrExtract, pdfTextExtract } from '../lib/parsers';
-import { IconClose, IconUpload } from './Icons';
+import { textToChapters } from '../lib/parsers';
+import { IconClose, IconUpload, IconBook, IconFeather } from './Icons';
+import type { Book } from '../lib/core';
+import { uid } from '../lib/core';
 
 interface Props {
   onClose: () => void;
   toast: (m: string) => void;
+  onPublish?: (book: Book) => void;
 }
 
 type Stage = 'idle' | 'preview' | 'text' | 'deciding' | 'ocr' | 'done';
 
 const fmt = (n: number) => faDigits(n.toFixed(3));
 
-/* a few lines of the book, used to build a real sample PDF on the fly */
-const SAMPLE_PARAS = [
-  'جوانی مهم‌ترین دوران زندگی انسان است؛ دورانی که در آن انتخاب‌های بزرگ انجام می‌شود و مسیر آیندهٔ آدمی شکل می‌گیرد.',
-  'هر انتخابی که در جوانی می‌کنیم، همچون بذری است که در زمینِ دل کاشته می‌شود و روزی به بار خواهد نشست؛ پس باید دانست چه می‌کاریم.',
-  'آن‌که در جوانی راه درست را برگزیند، در بزرگسالی آرامش و سربلندی خواهد داشت و آن‌که غفلت کند، پشیمانی بر او چیره خواهد شد.',
-  'انتخاب بزرگ، انتخابی است که با جان و دل آدمی سروکار دارد؛ انتخاب میان خوبی و بدی، میان ماندن و گذشتن، میان ابدیت و فنا.',
-];
+/** builds a real Persian PDF (image-based) from uploaded file for testing */
+async function makeSamplePdf(uploadedFile?: File): Promise<File> {
+  if (uploadedFile) {
+    return uploadedFile;
+  }
 
-/** builds a real Persian PDF (image-based) so the whole pipeline can be tested */
-async function makeSamplePdf(): Promise<File> {
   const { PDFDocument } = await import('pdf-lib');
   try {
-    // make sure the Persian webfont is ready so the browser shapes the text
     await document.fonts.load('46px Vazirmatn');
     await document.fonts.load('60px Lalezar');
   } catch {
@@ -40,8 +39,15 @@ async function makeSamplePdf(): Promise<File> {
   if (!meas) throw new Error('canvas');
   meas.font = FONT;
 
+  const sampleParas = [
+    'جوانی مهم‌ترین دوران زندگی انسان است؛ دورانی که در آن انتخاب‌های بزرگ انجام می‌شود و مسیر آیندهٔ آدمی شکل می‌گیرد.',
+    'هر انتخابی که در جوانی می‌کنیم، همچون بذری است که در زمینِ دل کاشته می‌شود و روزی به بار خواهد نشست؛ پس باید دانست چه می‌کاریم.',
+    'آن‌که در جوانی راه درست را برگزیند، در بزرگسالی آرامش و سربلندی خواهد داشت و آن‌که غفلت کند، پشیمانی بر او چیره خواهد شد.',
+    'انتخاب بزرگ، انتخابی است که با جان و دل آدمی سروکار دارد؛ انتخاب میان خوبی و بدی، میان ماندن و گذشتن، میان ابدیت و فنا.',
+  ];
+
   const wrapped: string[] = [];
-  for (const para of SAMPLE_PARAS) {
+  for (const para of sampleParas) {
     let line = '';
     for (const w of para.split(' ')) {
       const test = line ? `${line} ${w}` : w;
@@ -89,7 +95,7 @@ async function makeSamplePdf(): Promise<File> {
   return new File([bytes as unknown as BlobPart], 'javan-va-entekhab-e-bozorg.pdf', { type: 'application/pdf' });
 }
 
-export default function PdfLab({ onClose, toast }: Props) {
+export default function PdfLab({ onClose, toast, onPublish }: Props) {
   const [fileName, setFileName] = useState('');
   const [stage, setStage] = useState<Stage>('idle');
   const [note, setNote] = useState('');
@@ -102,6 +108,9 @@ export default function PdfLab({ onClose, toast }: Props) {
   const [busy, setBusy] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [tab, setTab] = useState<'text' | 'ocr' | 'compare'>('compare');
+  const [bookTitle, setBookTitle] = useState('');
+  const [bookAuthor, setBookAuthor] = useState('');
+  const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const reset = () => {
@@ -114,6 +123,7 @@ export default function PdfLab({ onClose, toast }: Props) {
     setOcrText('');
     setOcrQuality(null);
     setNote('');
+    setUploadedFile(null);
   };
 
   const analyze = async (file: File) => {
@@ -123,6 +133,7 @@ export default function PdfLab({ onClose, toast }: Props) {
     }
     reset();
     setFileName(file.name);
+    setUploadedFile(file);
     setBusy(true);
     try {
       const buf = await file.arrayBuffer();
@@ -189,6 +200,47 @@ export default function PdfLab({ onClose, toast }: Props) {
 
   const shown = decision === 'text' ? rawText : ocrText || rawText;
 
+  const handlePublish = () => {
+    const text = shown.trim();
+    if (!text) {
+      toast('متنی برای انتشار وجود ندارد.');
+      return;
+    }
+    if (!bookTitle.trim()) {
+      toast('لطفاً عنوان کتاب را وارد کنید.');
+      return;
+    }
+    if (!bookAuthor.trim()) {
+      toast('لطفاً نام نویسنده را وارد کنید.');
+      return;
+    }
+
+    const chapters = textToChapters(text, true);
+    const words = text.split(/\s+/).filter(Boolean).length;
+    const book: Book = {
+      id: `pdf-${uid()}`,
+      title: bookTitle.trim(),
+      author: bookAuthor.trim(),
+      category: 'عمومی',
+      desc: `کتاب «${bookTitle.trim()}» که از طریق آزمایشگاه PDF استخراج و منتشر شده است.`,
+      chapters,
+      uploaded: true,
+      uploader: undefined,
+      createdAt: Date.now(),
+      originalPdf: true,
+      minutes: Math.max(2, Math.round(words / 190)),
+      year: new Intl.DateTimeFormat('fa-IR', { year: 'numeric' }).format(Date.now()),
+      pages: Math.max(4, Math.round(words / 230)),
+      tags: [],
+    };
+
+    if (onPublish) {
+      onPublish(book);
+      toast(`«${book.title}» منتشر شد!`);
+      onClose();
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-night-950/85 p-4 backdrop-blur-sm" onClick={onClose}>
       <div
@@ -234,17 +286,23 @@ export default function PdfLab({ onClose, toast }: Props) {
             <input ref={fileRef} type="file" accept=".pdf" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) analyze(f); e.target.value = ''; }} />
           </div>
 
-          {/* one-click sample built from the book itself */}
+          {/* one-click sample built from the uploaded PDF or fallback to sample */}
           <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gold-500/25 bg-gold-500/[0.06] px-4 py-3">
             <div>
-              <p className="text-xs font-bold text-gold-300">نمونهٔ آماده: «جوان و انتخاب بزرگ»</p>
-              <p className="text-[11px] text-mist-500">چند سطر از کتاب به یک PDF واقعی تبدیل و همین‌جا پردازش می‌شود تا نتیجه را ببینید.</p>
+              <p className="text-xs font-bold text-gold-300">
+                {uploadedFile ? `آزمایش روی PDF آپلودشده: ${uploadedFile.name}` : 'نمونهٔ آماده: «جوان و انتخاب بزرگ»'}
+              </p>
+              <p className="text-[11px] text-mist-500">
+                {uploadedFile
+                  ? 'همین‌جا پردازش می‌شود تا نتیجه را ببینید.'
+                  : 'چند سطر از کتاب به یک PDF واقعی تبدیل و همین‌جا پردازش می‌شود تا نتیجه را ببینید.'}
+              </p>
             </div>
             <button
               disabled={busy}
               onClick={async () => {
                 try {
-                  const f = await makeSamplePdf();
+                  const f = await makeSamplePdf(uploadedFile ?? undefined);
                   await analyze(f);
                 } catch {
                   toast('ساخت نمونه ناموفق بود.');
@@ -252,7 +310,7 @@ export default function PdfLab({ onClose, toast }: Props) {
               }}
               className="rounded-md bg-gold-500 px-4 py-2 text-xs font-bold text-night-900 transition-all enabled:hover:bg-gold-400 disabled:opacity-40"
             >
-              ساخت و آزمایش نمونه
+              {uploadedFile ? 'آزمایش PDF آپلودشده' : 'ساخت و آزمایش نمونه'}
             </button>
           </div>
 
@@ -350,6 +408,44 @@ export default function PdfLab({ onClose, toast }: Props) {
                   </p>
                 )}
               </div>
+            </div>
+          )}
+
+          {/* publish section */}
+          {stage === 'done' && onPublish && (
+            <div className="mt-5 rounded-lg border border-turq-500/30 bg-turq-500/[0.06] p-5">
+              <h3 className="mb-3 flex items-center gap-2 text-sm font-bold text-turq-400">
+                <IconBook size={18} /> انتشار این متن به‌عنوان کتاب در کتابخانه
+              </h3>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="block">
+                  <span className="mb-1 block text-xs font-bold text-mist-400">عنوان کتاب *</span>
+                  <input
+                    type="text"
+                    value={bookTitle}
+                    onChange={(e) => setBookTitle(e.target.value)}
+                    placeholder="مثلاً: جوان و انتخاب بزرگ"
+                    className="w-full rounded-md border border-night-500 bg-night-900/60 px-3 py-2 text-sm text-mist-100 placeholder:text-mist-500 focus:border-turq-500/60 focus:outline-none"
+                  />
+                </label>
+                <label className="block">
+                  <span className="mb-1 block text-xs font-bold text-mist-400">نام نویسنده *</span>
+                  <input
+                    type="text"
+                    value={bookAuthor}
+                    onChange={(e) => setBookAuthor(e.target.value)}
+                    placeholder="نام نویسنده"
+                    className="w-full rounded-md border border-night-500 bg-night-900/60 px-3 py-2 text-sm text-mist-100 placeholder:text-mist-500 focus:border-turq-500/60 focus:outline-none"
+                  />
+                </label>
+              </div>
+              <button
+                onClick={handlePublish}
+                disabled={!bookTitle.trim() || !bookAuthor.trim()}
+                className="mt-4 flex items-center justify-center gap-2 rounded-md bg-turq-500 px-6 py-3 text-sm font-black text-night-900 transition-all enabled:hover:bg-turq-400 disabled:opacity-35"
+              >
+                <IconFeather size={18} /> انتشار کتاب در قفسهٔ کتابخانه
+              </button>
             </div>
           )}
         </div>

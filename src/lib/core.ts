@@ -35,6 +35,7 @@ export interface Review {
   rating: number;
   text: string;
   date: number;
+  userId?: string;
 }
 
 export interface Highlight {

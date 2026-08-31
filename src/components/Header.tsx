@@ -1,5 +1,5 @@
 import { cx } from '../lib/core';
-import { IconDesk, IconFeather, IconSearch, IconShelf } from './Icons';
+import { IconDesk, IconFeather, IconSearch, IconShelf, IconUser, IconLogOut } from './Icons';
 
 interface Props {
   view: 'library' | 'authors';
@@ -8,13 +8,16 @@ interface Props {
   query: string;
   setQuery: (q: string) => void;
   onLab?: () => void;
+  user: import('@supabase/supabase-js').User | null;
+  profile: import('../lib/database.types').Profile | null;
+  onSignOut: () => void;
+  onAuthRequired: (mode: 'login' | 'register') => void;
 }
 
-export default function Header({ view, onNav, onDesk, query, setQuery, onLab }: Props) {
+export default function Header({ view, onNav, onDesk, query, setQuery, onLab, user, profile, onSignOut, onAuthRequired }: Props) {
   return (
     <header className="sticky top-0 z-40 border-b border-gold-500/10 bg-night-900/85 backdrop-blur-md">
       <div className="mx-auto flex max-w-7xl items-center gap-3 px-4 py-3 sm:px-6">
-        {/* logo */}
         <button onClick={() => onNav('library')} className="group flex items-center gap-2.5 text-right" aria-label="کتابخانهٔ مانا">
           <span className="relative grid h-11 w-11 place-items-center overflow-hidden rounded-lg bg-gradient-to-br from-night-600 to-night-800 shadow-[0_6px_18px_rgba(0,0,0,0.4)] ring-1 ring-gold-500/30 transition-transform duration-300 group-hover:-rotate-6">
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#e3b341" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
@@ -56,7 +59,6 @@ export default function Header({ view, onNav, onDesk, query, setQuery, onLab }: 
           </button>
         </nav>
 
-        {/* search */}
         <div className="ms-auto flex items-center gap-2">
           {onLab && (
             <button
@@ -81,10 +83,42 @@ export default function Header({ view, onNav, onDesk, query, setQuery, onLab }: 
               className="w-full bg-transparent py-2 pe-3 ps-9 text-sm text-mist-100 placeholder:text-mist-500 focus:outline-none"
             />
           </label>
+
+          {user ? (
+            <div className="flex items-center gap-2">
+              <div className="hidden items-center gap-2 sm:flex">
+                <span className="grid h-8 w-8 place-items-center rounded-full bg-gradient-to-br from-gold-500/20 to-turq-500/20 font-display text-sm text-gold-400 ring-1 ring-gold-500/30">
+                  {(profile?.display_name || user.email || 'ک')[0].toUpperCase()}
+                </span>
+                <span className="text-xs text-mist-400">{profile?.display_name || user.email?.split('@')[0]}</span>
+              </div>
+              <button
+                onClick={onSignOut}
+                title="خروج"
+                className="rounded-md p-2 text-mist-500 transition-colors hover:bg-night-700 hover:text-mist-100"
+              >
+                <IconLogOut size={18} />
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={() => onAuthRequired('login')}
+                className="rounded-md px-3 py-2 text-xs font-medium text-mist-400 transition-colors hover:bg-night-700 hover:text-mist-100"
+              >
+                ورود
+              </button>
+              <button
+                onClick={() => onAuthRequired('register')}
+                className="rounded-md bg-gold-500 px-3 py-2 text-xs font-bold text-night-900 transition-all hover:bg-gold-400"
+              >
+                عضویت
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
-      {/* mobile nav */}
       <nav className="flex items-center gap-1 overflow-x-auto px-4 pb-2.5 md:hidden">
         {[
           { k: 'library' as const, label: 'کتابخانه', icon: <IconShelf size={16} /> },

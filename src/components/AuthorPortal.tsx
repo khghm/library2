@@ -2,18 +2,19 @@ import { useMemo, useRef, useState } from 'react';
 import type { Book, Chapter } from '../lib/core';
 import { CATEGORIES, COVER_PALETTE, cx, faNum, readingWords, uid } from '../lib/core';
 import { ACCEPTED, isGenericTitle, mdToChapters, parseFile, textToChapters } from '../lib/parsers';
-import { savePdf } from '../lib/blobStore';
 import { Cover } from './BookCard';
 import CoverPicker from './CoverPicker';
 import { IconCheck, IconFeather, IconLayers, IconPencil, IconPlus, IconTrash, IconUpload } from './Icons';
+import type { User } from '@supabase/supabase-js';
 
 interface Props {
-  uploads: Book[];
+  books: Book[];
   onPublish: (b: Book) => void;
   onDelete: (id: string) => void;
   onEdit: (b: Book) => void;
   toast: (m: string) => void;
   onRead: (b: Book) => void;
+  user: User | null;
 }
 
 const FORMATS = [
@@ -24,7 +25,7 @@ const FORMATS = [
   { ext: 'PDF', note: 'پی‌دی‌اف؛ متن استخراج و فصل‌بندی می‌شود' },
 ];
 
-export default function AuthorPortal({ uploads, onPublish, onDelete, onEdit, toast, onRead }: Props) {
+export default function AuthorPortal({ books, onPublish, onDelete, onEdit, toast, onRead, user }: Props) {
   const [title, setTitle] = useState('');
   const [author, setAuthor] = useState('');
   const [category, setCategory] = useState<string>(CATEGORIES[6]);
@@ -42,14 +43,13 @@ export default function AuthorPortal({ uploads, onPublish, onDelete, onEdit, toa
   const [parseNote, setParseNote] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
   const moreRef = useRef<HTMLInputElement>(null);
-  /* original bytes of an uploaded PDF (kept so the reader can render the
-     real pages later); only used when exactly one PDF is the source */
   const pdfBytesRef = useRef<ArrayBuffer | null>(null);
   const pdfCountRef = useRef(0);
 
   const words = useMemo(() => (chapters ? chapters.reduce((a, c) => a + readingWords(c.paras), 0) : 0), [chapters]);
 
-  /** parses one or several files and merges their chapters (optionally appending) */
+  const userBooks = useMemo(() => books.filter((b) => b.uploader === user?.id), [books, user]);
+
   const parseFiles = async (files: File[], append: boolean) => {
     if (!files.length) return;
     setParsing(true);
@@ -120,17 +120,6 @@ export default function AuthorPortal({ uploads, onPublish, onDelete, onEdit, toa
     if (!title.trim() || !author.trim()) return toast('عنوان و نام نویسنده لازم است.');
     if (!chapters || chapters.length === 0) return toast('ابتدا فایل کتاب را بارگذاری یا متن را پردازش کنید.');
     const id = `up-${uid()}`;
-    /* if the source is exactly one PDF, keep the original file so the reader
-       can render the real pages (pixel-exact text, immune to broken fonts) */
-    let originalPdf = false;
-    if (pdfCountRef.current === 1 && pdfBytesRef.current) {
-      try {
-        await savePdf(id, new Blob([pdfBytesRef.current], { type: 'application/pdf' }));
-        originalPdf = true;
-      } catch {
-        /* storage unavailable — text mode still works */
-      }
-    }
     const book: Book = {
       id,
       title: title.trim(),
@@ -146,9 +135,9 @@ export default function AuthorPortal({ uploads, onPublish, onDelete, onEdit, toa
       tags: tags.split(/[,،]/).map((t) => t.trim()).filter(Boolean).slice(0, 6),
       chapters,
       uploaded: true,
-      uploader: author.trim(),
+      uploader: user?.id,
       createdAt: Date.now(),
-      originalPdf,
+      originalPdf: pdfCountRef.current === 1,
     };
     onPublish(book);
     setTitle(''); setDesc(''); setTags(''); setChapters(null); setFileNames([]); setPasted(''); setCover(undefined);
@@ -164,7 +153,6 @@ export default function AuthorPortal({ uploads, onPublish, onDelete, onEdit, toa
 
   return (
     <div className="mx-auto max-w-7xl px-4 pb-20 pt-10 sm:px-6">
-      {/* intro */}
       <div className="grid gap-10 lg:grid-cols-[1fr_1.15fr] lg:gap-14">
         <div>
           <p className="mb-4 flex items-center gap-2 text-xs font-bold tracking-[0.25em] text-turq-400">
@@ -179,7 +167,6 @@ export default function AuthorPortal({ uploads, onPublish, onDelete, onEdit, toa
             اگر نویسنده‌اید، پژوهش‌تان آماده است یا یادداشت‌هایی دارید که باید کتاب شوند — اینجا همان جایی است که متن‌تان به کتابی خواندنی تبدیل می‌شود؛ با جلد، فصل‌بندی و جایگاهِ دائمی در کتابخانه.
           </p>
 
-          {/* steps timeline */}
           <ol className="relative mt-10 space-y-8 border-r border-night-600 pr-8">
             {steps.map((s, i) => (
               <li key={i} className="relative">
@@ -192,7 +179,6 @@ export default function AuthorPortal({ uploads, onPublish, onDelete, onEdit, toa
             ))}
           </ol>
 
-          {/* formats */}
           <div className="mt-10">
             <p className="mb-3 flex items-center gap-2 text-xs font-bold text-mist-500"><IconLayers size={15} className="text-turq-400" /> قالب‌های پشتیبانی‌شده</p>
             <div className="flex flex-wrap gap-2.5">
@@ -206,7 +192,6 @@ export default function AuthorPortal({ uploads, onPublish, onDelete, onEdit, toa
           </div>
         </div>
 
-        {/* the form */}
         <div className="rounded-xl border border-night-500/70 bg-night-800/70 p-6 shadow-[0_30px_70px_rgba(0,0,0,0.35)] sm:p-8">
           <div className="grid gap-4 sm:grid-cols-2">
             <label className="block">
@@ -238,7 +223,6 @@ export default function AuthorPortal({ uploads, onPublish, onDelete, onEdit, toa
             </label>
           </div>
 
-          {/* cover: image upload + fallback color */}
           <div className="mt-5">
             <CoverPicker
               title={title}
@@ -253,7 +237,6 @@ export default function AuthorPortal({ uploads, onPublish, onDelete, onEdit, toa
             />
           </div>
 
-          {/* text cleaning toggle */}
           <label className="mt-6 flex cursor-pointer items-start gap-3 rounded-lg border border-night-600 bg-night-900/40 px-4 py-3 transition-colors hover:border-turq-500/35">
             <input
               type="checkbox"
@@ -266,11 +249,10 @@ export default function AuthorPortal({ uploads, onPublish, onDelete, onEdit, toa
               <span className="mx-1.5 text-night-500">|</span>
               کاراکترهای اضافیِ رایج در فایل‌های استخراج‌شده نظیر
               <span dir="ltr" className="mx-1.5 rounded bg-night-700 px-1.5 py-0.5 font-mono text-[10px] tracking-wider text-gold-400"># * _ | \ / + $ ! -</span>
-              به‌همراه خطوط جداکننده و شماره‌صفحه‌های تنها حذف می‌شوند تا متن کتاب تمیز بماند. (کاربردهای سالم — مانند «و/یا» یا علامت تعجب پس از کلمه — حفظ می‌شوند.)
+              به‌همراه خطوط جداکننده و شماره‌صفحه‌های تنها حذف می‌شوند تا متن کتاب تمیز بماند.
             </span>
           </label>
 
-          {/* upload zone */}
           <div className="mt-5">
             <span className="mb-2 block text-xs font-bold text-mist-400">فایل کتاب <span className="font-normal text-mist-500">— یک یا چند فایل</span></span>
             <div
@@ -313,7 +295,7 @@ export default function AuthorPortal({ uploads, onPublish, onDelete, onEdit, toa
                 <>
                   <IconUpload size={26} className="text-mist-500" />
                   <p className="text-sm font-bold text-mist-300">فایل‌ها را این‌جا رها کنید یا کلیک کنید</p>
-                  <p className="text-[11px] text-mist-500">TXT · Markdown · HTML · DOCX · PDF — می‌توانید چند فایل (مثلاً فصل‌های جداگانهٔ Markdown) را با هم انتخاب کنید</p>
+                  <p className="text-[11px] text-mist-500">TXT · Markdown · HTML · DOCX · PDF — می‌توانید چند فایل را با هم انتخاب کنید</p>
                 </>
               )}
               <input
@@ -352,7 +334,6 @@ export default function AuthorPortal({ uploads, onPublish, onDelete, onEdit, toa
             />
           </div>
 
-          {/* paste fallback */}
           <div className="mt-5">
             <div className="mb-2 flex items-center justify-between">
               <span className="text-xs font-bold text-mist-400">یا متن را همین‌جا بچسبانید</span>
@@ -370,11 +351,10 @@ export default function AuthorPortal({ uploads, onPublish, onDelete, onEdit, toa
             </button>
           </div>
 
-          {/* chapter preview */}
           {chapters && (
             <div className="pop-in mt-6 rounded-lg border border-night-600 bg-night-900/50 p-4">
               <p className="mb-3 flex items-center gap-2 text-xs font-bold text-mist-400">
-                <IconLayers size={15} className="text-turq-400" /> پیش‌نمایش فصل‌بندی <span className="text-mist-500">({faNum(chapters.length)} فصل)</span>
+                <IconLayers size={15} className="text-turq-400" /> پیش‌نمایش فصل‌بندی <span className="text-mist-500">(${faNum(chapters.length)} فصل)</span>
               </p>
               <div className="max-h-52 space-y-1.5 overflow-y-auto pe-1">
                 {chapters.map((c, i) => (
@@ -397,19 +377,20 @@ export default function AuthorPortal({ uploads, onPublish, onDelete, onEdit, toa
           >
             <IconFeather size={19} /> انتشار کتاب در کتابخانه
           </button>
-          <p className="mt-2.5 text-center text-[10px] text-mist-500">کتاب منتشرشده در دستگاه شما ذخیره می‌شود و همراه کتاب‌های کتابخانه به همهٔ خوانندگان نمایش داده خواهد شد.</p>
+          <p className="mt-2.5 text-center text-[10px] text-mist-500">
+            کتاب منتشرشده با نام نویسندهٔ واردشده ثبت می‌شود و در قفسهٔ کتابخانه در دسترس همه خواهد بود.
+          </p>
         </div>
       </div>
 
-      {/* published list */}
-      {uploads.length > 0 && (
+      {userBooks.length > 0 && (
         <section className="mt-16">
           <h2 className="mb-5 flex items-center gap-3 font-display text-2xl text-mist-100">
             <span className="grid h-9 w-9 place-items-center rounded-md bg-turq-500/12 text-turq-400 ring-1 ring-turq-500/25"><IconFeather size={18} /></span>
-            کتاب‌های منتشرشده از این درگاه <span className="rounded bg-night-700 px-2.5 py-0.5 text-sm text-turq-400">{faNum(uploads.length)}</span>
+            کتاب‌های منتشرشده از این درگاه <span className="rounded bg-night-700 px-2.5 py-0.5 text-sm text-turq-400">{faNum(userBooks.length)}</span>
           </h2>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {uploads.map((b) => (
+            {userBooks.map((b) => (
               <div key={b.id} className="group flex items-center gap-4 rounded-lg border border-night-500/60 bg-night-800/60 p-3.5 transition-colors hover:border-turq-500/40">
                 <button onClick={() => onRead(b)} className="h-20 w-14 shrink-0 overflow-hidden rounded transition-transform group-hover:-translate-y-1">
                   <Cover book={b} />

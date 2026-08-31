@@ -3,6 +3,7 @@ import type { Book, Review } from '../lib/core';
 import { faDigits, faNum, timeAgo, uid } from '../lib/core';
 import { Cover } from './BookCard';
 import { IconBookmark, IconClock, IconClose, IconLayers, IconOpenBook, IconPencil, IconQuote, IconStar, IconTrash } from './Icons';
+import type { User } from '@supabase/supabase-js';
 
 interface Props {
   book: Book;
@@ -11,10 +12,11 @@ interface Props {
   onClose: () => void;
   onRead: (b: Book, chapter?: number) => void;
   onToggleShelf: (id: string) => void;
-  onAddReview: (r: Review) => void;
+  onAddReview: (bookId: string, name: string, rating: number, text: string) => void;
   onDeleteReview: (id: string) => void;
   onEdit: (b: Book) => void;
   onDeleteBook?: (id: string) => void;
+  user: User | null;
 }
 
 function Stars({ value, onChange }: { value: number; onChange?: (n: number) => void }) {
@@ -38,7 +40,7 @@ function Stars({ value, onChange }: { value: number; onChange?: (n: number) => v
   );
 }
 
-export default function BookModal({ book, reviews, inShelf, onClose, onRead, onToggleShelf, onAddReview, onDeleteReview, onEdit, onDeleteBook }: Props) {
+export default function BookModal({ book, reviews, inShelf, onClose, onRead, onToggleShelf, onAddReview, onDeleteReview, onEdit, onDeleteBook, user }: Props) {
   const [tab, setTab] = useState<'about' | 'reviews'>('about');
   const [name, setName] = useState('');
   const [rating, setRating] = useState(5);
@@ -59,7 +61,7 @@ export default function BookModal({ book, reviews, inShelf, onClose, onRead, onT
 
   const submit = () => {
     if (!text.trim()) return;
-    onAddReview({ id: uid(), bookId: book.id, name: name.trim() || 'خوانندهٔ ناشناس', rating, text: text.trim(), date: Date.now() });
+    onAddReview(book.id, name.trim(), rating, text.trim());
     setText('');
     setName('');
     setRating(5);
@@ -71,7 +73,6 @@ export default function BookModal({ book, reviews, inShelf, onClose, onRead, onT
         className="pop-in relative flex max-h-[92vh] w-full max-w-3xl flex-col overflow-hidden rounded-t-2xl border border-night-500/60 bg-night-800 shadow-[0_40px_90px_rgba(0,0,0,0.6)] sm:rounded-xl"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* header band */}
         <div className="flex items-center justify-between border-b border-night-600 px-5 py-3">
           <div className="flex items-center gap-2 text-xs text-mist-500">
             <span className="rounded bg-night-700 px-2 py-0.5 text-mist-300">{book.category}</span>
@@ -84,7 +85,6 @@ export default function BookModal({ book, reviews, inShelf, onClose, onRead, onT
         </div>
 
         <div className="grid gap-6 overflow-y-auto p-5 sm:grid-cols-[200px_1fr] sm:p-6">
-          {/* cover side */}
           <div>
             <div className="aspect-[2/3] w-44 sm:w-full">
               <Cover book={book} />
@@ -121,7 +121,6 @@ export default function BookModal({ book, reviews, inShelf, onClose, onRead, onT
             </div>
           </div>
 
-          {/* info side */}
           <div className="min-w-0">
             <h2 className="font-display text-3xl leading-10 text-mist-100">{book.title}</h2>
             <p className="mt-0.5 text-sm font-light text-mist-400">
@@ -145,7 +144,6 @@ export default function BookModal({ book, reviews, inShelf, onClose, onRead, onT
               ))}
             </div>
 
-            {/* tabs */}
             <div className="mt-5 flex gap-1 border-b border-night-600">
               {([['about', 'دربارهٔ کتاب'], ['reviews', `نقدها (${faNum(bookReviews.length)})`]] as const).map(([k, label]) => (
                 <button
@@ -186,39 +184,39 @@ export default function BookModal({ book, reviews, inShelf, onClose, onRead, onT
               </div>
             ) : (
               <div className="py-4">
-                {/* review form */}
-                <div className="rounded-lg border border-night-500/70 bg-night-900/50 p-4">
-                  <p className="mb-2 flex items-center gap-2 text-sm font-bold text-mist-200">
-                    <IconQuote size={17} className="text-gold-500" /> نقد خود را بنویسید
-                  </p>
-                  <div className="mb-2.5 flex flex-wrap items-center gap-3">
-                    <Stars value={rating} onChange={setRating} />
-                    <input
-                      value={name}
-                      onChange={(e) => setName(e.target.value)}
-                      placeholder="نام شما (اختیاری)"
-                      className="w-44 rounded-md border border-night-500 bg-night-800 px-3 py-1.5 text-xs text-mist-100 placeholder:text-mist-500 focus:border-gold-500/50 focus:outline-none"
+                {user && (
+                  <div className="rounded-lg border border-night-500/70 bg-night-900/50 p-4">
+                    <p className="mb-2 flex items-center gap-2 text-sm font-bold text-mist-200">
+                      <IconQuote size={17} className="text-gold-500" /> نقد خود را بنویسید
+                    </p>
+                    <div className="mb-2.5 flex flex-wrap items-center gap-3">
+                      <Stars value={rating} onChange={setRating} />
+                      <input
+                        value={name}
+                        onChange={(e) => setName(e.target.value)}
+                        placeholder="نام شما (اختیاری)"
+                        className="w-44 rounded-md border border-night-500 bg-night-800 px-3 py-1.5 text-xs text-mist-100 placeholder:text-mist-500 focus:border-gold-500/50 focus:outline-none"
+                      />
+                    </div>
+                    <textarea
+                      value={text}
+                      onChange={(e) => setText(e.target.value)}
+                      rows={3}
+                      placeholder="این کتاب برای شما چه کرد؟"
+                      className="w-full resize-none rounded-md border border-night-500 bg-night-800 px-3 py-2 text-sm leading-6 text-mist-100 placeholder:text-mist-500 focus:border-gold-500/50 focus:outline-none"
                     />
+                    <div className="mt-2 flex justify-end">
+                      <button
+                        onClick={submit}
+                        disabled={!text.trim()}
+                        className="rounded-md bg-gold-500 px-5 py-1.5 text-sm font-bold text-night-900 transition-all enabled:hover:bg-gold-400 disabled:opacity-40"
+                      >
+                        ثبت نقد
+                      </button>
+                    </div>
                   </div>
-                  <textarea
-                    value={text}
-                    onChange={(e) => setText(e.target.value)}
-                    rows={3}
-                    placeholder="این کتاب برای شما چه کرد؟"
-                    className="w-full resize-none rounded-md border border-night-500 bg-night-800 px-3 py-2 text-sm leading-6 text-mist-100 placeholder:text-mist-500 focus:border-gold-500/50 focus:outline-none"
-                  />
-                  <div className="mt-2 flex justify-end">
-                    <button
-                      onClick={submit}
-                      disabled={!text.trim()}
-                      className="rounded-md bg-gold-500 px-5 py-1.5 text-sm font-bold text-night-900 transition-all enabled:hover:bg-gold-400 disabled:opacity-40"
-                    >
-                      ثبت نقد
-                    </button>
-                  </div>
-                </div>
+                )}
 
-                {/* review list */}
                 <div className="mt-4 space-y-3">
                   {bookReviews.length === 0 && <p className="py-6 text-center text-sm text-mist-500">اولین منتقدِ این کتاب باشید.</p>}
                   {bookReviews.map((r) => (
@@ -239,9 +237,11 @@ export default function BookModal({ book, reviews, inShelf, onClose, onRead, onT
                               <IconStar key={i} size={12} filled={r.rating >= i} className={r.rating >= i ? '' : 'opacity-30'} />
                             ))}
                           </div>
-                          <button onClick={() => onDeleteReview(r.id)} className="rounded p-1 text-mist-500 opacity-0 transition-all hover:bg-rose-500/15 hover:text-rose-500 group-hover:opacity-100" aria-label="حذف نقد">
-                            <IconTrash size={14} />
-                          </button>
+                          {user && r.userId === user.id && (
+                            <button onClick={() => onDeleteReview(r.id)} className="rounded p-1 text-mist-500 opacity-0 transition-all hover:bg-rose-500/15 hover:text-rose-500 group-hover:opacity-100" aria-label="حذف نقد">
+                              <IconTrash size={14} />
+                            </button>
+                          )}
                         </div>
                       </div>
                       <p className="mt-2.5 text-sm leading-7 text-mist-300">{r.text}</p>

@@ -524,13 +524,47 @@ const COMMON_WORDS: Set<string> = (() => {
 })();
 
 /**
+ * Detects if text was extracted from a PDF with custom font encoding.
+ * Such text uses Presentation Forms (FE70-FEFF) mapped to wrong base chars.
+ */
+function hasCustomFontEncoding(rawText: string, normalizedText: string): boolean {
+  const presentationForms = (rawText.match(/[\uFE70-\uFEFF]/g) || []).length;
+  const totalChars = rawText.replace(/\s/g, '').length;
+
+  if (totalChars < 100) return false;
+  const presentationRatio = presentationForms / totalChars;
+
+  if (presentationRatio < 0.4) return false;
+
+  const words = normalizedText.match(/[\u0600-\u06FF]{3,}/g) || [];
+  if (words.length < 10) return false;
+
+  const properEndings = /(ی|ان|ها|تر|ترین|مان|تان|شان|گی|ین|ون|یان|ایی)$/;
+  const wordsWithEndings = words.filter(w => properEndings.test(w));
+  const endingRatio = wordsWithEndings.length / words.length;
+
+  const garbledWords = words.filter(w => {
+    const consonants = w.match(/[\u0621-\u063A\u0641-\u064A]/g) || [];
+    return consonants.length >= 4;
+  });
+  const garbledRatio = garbledWords.length / words.length;
+
+  return endingRatio < 0.15 || garbledRatio > 0.4;
+}
+
+/**
  * 0..1 — share of tokens (length ≥ 2 after normalization) that are among the
  * most frequent Persian/Arabic words. Real prose: typically 0.15–0.45.
  * Text from a broken font encoding: near zero.
  */
-export function arabicTextQuality(text: string): number {
+export function arabicTextQuality(text: string, rawText?: string): number {
   const tokens = text.split(/\s+/).filter(Boolean).map(normalizeArabicToken).filter((t) => t.length >= 2);
   if (tokens.length < 15) return tokens.length === 0 ? 0 : 0.5;
+
+  if (rawText && hasCustomFontEncoding(rawText, text)) {
+    return 0;
+  }
+
   let hits = 0;
   for (const t of tokens) if (COMMON_WORDS.has(t)) hits++;
   return hits / tokens.length;
@@ -549,6 +583,20 @@ export async function getPdfJs() {
 }
 
 /** Fast path: extract the embedded text layer. */
+export async function pdfRawTextExtract(buf: ArrayBuffer): Promise<string> {
+  const pdfjs = await getPdfJs();
+  const doc = await pdfjs.getDocument({ data: new Uint8Array(buf.slice(0)) }).promise;
+  const pages: string[] = [];
+  for (let i = 1; i <= doc.numPages; i++) {
+    const page = await doc.getPage(i);
+    const content = await page.getTextContent();
+    const lines = extractPdfLines(content.items as unknown as PdfTextItem[]);
+    pages.push(lines.join('\n'));
+  }
+  return pages.join('\n\n');
+}
+
+/** Fallback: render pages to images and read them with OCR. */
 export async function pdfTextExtract(buf: ArrayBuffer): Promise<string> {
   const pdfjs = await getPdfJs();
   /* slice() copies the buffer so pdf.js can't detach the caller's copy —
@@ -663,7 +711,9 @@ async function pdfToChapters(
     return textToChapters(ocrText, clean);
   }
 
-  const quality = arabicTextQuality(text);
+  // Get raw text (before normalization) to detect custom font encoding
+  const rawText = await pdfRawTextExtract(buf);
+  const quality = arabicTextQuality(text, rawText);
   if (quality < 0.03) {
     // text came out but it's not readable Persian/Arabic (broken font
     // encoding) — re-read the pages as images instead

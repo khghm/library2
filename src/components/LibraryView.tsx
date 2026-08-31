@@ -47,6 +47,8 @@ function Reveal({ children, delay = 0, className = '' }: { children: React.React
 export default function LibraryView({ books, progress, highlights, bookmarks, reviews, myShelf, query, onRead, onOpen, onToggleShelf, onEdit, onGoAuthors }: Props) {
   const [cat, setCat] = useState<string>('همه');
   const [sort, setSort] = useState<string>('rec');
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 12;
 
   const cats = useMemo(() => ['همه', ...Array.from(new Set(books.map((b) => b.category)))], [books]);
 
@@ -63,6 +65,16 @@ export default function LibraryView({ books, progress, highlights, bookmarks, re
     if (sort === 'new') list = [...list].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
     return list;
   }, [books, cat, query, sort]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / itemsPerPage));
+  const paginatedBooks = useMemo(() => {
+    const start = (currentPage - 1) * itemsPerPage;
+    return filtered.slice(start, start + itemsPerPage);
+  }, [filtered, currentPage]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [cat, sort, query]);
 
   const continueList = useMemo(
     () =>
@@ -92,7 +104,6 @@ export default function LibraryView({ books, progress, highlights, bookmarks, re
 
   return (
     <div className="mx-auto max-w-7xl px-4 sm:px-6">
-      {/* ============ opening: the shelf room ============ */}
       <section className="grid items-center gap-10 pb-16 pt-10 lg:grid-cols-[1.02fr_1fr] lg:gap-14 lg:pt-16">
         <div>
           <Reveal>
@@ -152,7 +163,6 @@ export default function LibraryView({ books, progress, highlights, bookmarks, re
         </Reveal>
       </section>
 
-      {/* ============ continue reading ============ */}
       {continueList.length > 0 && (
         <section className="pb-14">
           <Reveal>
@@ -186,7 +196,6 @@ export default function LibraryView({ books, progress, highlights, bookmarks, re
         </section>
       )}
 
-      {/* ============ the shelf / grid ============ */}
       <section id="library" className="scroll-mt-24 pb-16">
         <Reveal>
           <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
@@ -234,27 +243,83 @@ export default function LibraryView({ books, progress, highlights, bookmarks, re
             <p className="mt-2 text-sm text-mist-500">جست‌وجو یا دسته‌بندی دیگری را امتحان کنید.</p>
           </div>
         ) : (
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 sm:gap-5 lg:grid-cols-4">
-            {filtered.map((b, i) => (
-              <Reveal key={b.id} delay={(i % 4) * 70}>
-                <BookCard
-                  book={b}
-                  progress={progress[b.id]}
-                  rating={ratingOf(b.id).avg}
-                  ratingCount={ratingOf(b.id).count}
-                  inShelf={myShelf.includes(b.id)}
-                  onOpen={onOpen}
-                  onRead={(bk) => onRead(bk)}
-                  onToggleShelf={onToggleShelf}
-                  onEdit={onEdit}
-                />
-              </Reveal>
-            ))}
-          </div>
+          <>
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 sm:gap-5 lg:grid-cols-4">
+              {paginatedBooks.map((b, i) => (
+                <Reveal key={b.id} delay={(i % 4) * 70}>
+                  <BookCard
+                    book={b}
+                    progress={progress[b.id]}
+                    rating={ratingOf(b.id).avg}
+                    ratingCount={ratingOf(b.id).count}
+                    inShelf={myShelf.includes(b.id)}
+                    onOpen={onOpen}
+                    onRead={(bk) => onRead(bk)}
+                    onToggleShelf={onToggleShelf}
+                    onEdit={onEdit}
+                  />
+                </Reveal>
+              ))}
+            </div>
+
+            {totalPages > 1 && (
+              <div className="mt-8 flex items-center justify-center gap-2">
+                <button
+                  onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                  disabled={currentPage === 1}
+                  className="flex items-center gap-1 rounded-md border border-night-500 px-3 py-2 text-xs font-medium text-mist-400 transition-colors enabled:hover:border-gold-500/50 enabled:hover:text-gold-400 disabled:opacity-30"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M14.5 5.5L8 12l6.5 6.5" />
+                  </svg>
+                  قبلی
+                </button>
+
+                <div className="flex items-center gap-1">
+                  {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                    let pageNum: number;
+                    if (totalPages <= 5) {
+                      pageNum = i + 1;
+                    } else if (currentPage <= 3) {
+                      pageNum = i + 1;
+                    } else if (currentPage >= totalPages - 2) {
+                      pageNum = totalPages - 4 + i;
+                    } else {
+                      pageNum = currentPage - 2 + i;
+                    }
+                    return (
+                      <button
+                        key={pageNum}
+                        onClick={() => setCurrentPage(pageNum)}
+                        className={cx(
+                          'h-9 w-9 rounded-md text-xs font-bold transition-all',
+                          currentPage === pageNum
+                            ? 'bg-gold-500 text-night-900'
+                            : 'border border-night-500 text-mist-400 hover:border-gold-500/50 hover:text-gold-400',
+                        )}
+                      >
+                        {faNum(pageNum)}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <button
+                  onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                  disabled={currentPage === totalPages}
+                  className="flex items-center gap-1 rounded-md border border-night-500 px-3 py-2 text-xs font-medium text-mist-400 transition-colors enabled:hover:border-gold-500/50 enabled:hover:text-gold-400 disabled:opacity-30"
+                >
+                  بعدی
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M9.5 5.5L16 12l-6.5 6.5" />
+                  </svg>
+                </button>
+              </div>
+            )}
+          </>
         )}
       </section>
 
-      {/* ============ study desk ============ */}
       <section id="desk" className="scroll-mt-24 pb-20">
         <Reveal>
           <div className="mb-7 flex items-center gap-3">
@@ -267,7 +332,6 @@ export default function LibraryView({ books, progress, highlights, bookmarks, re
         </Reveal>
 
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          {/* reading time — tall card */}
           <Reveal className="md:col-span-2 xl:row-span-2">
             <div className="relative flex h-full flex-col overflow-hidden rounded-lg border border-night-500/60 bg-gradient-to-b from-night-700/70 to-night-800/70 p-6">
               <div className="girih-layer absolute inset-0 opacity-[0.06]" />
@@ -297,7 +361,6 @@ export default function LibraryView({ books, progress, highlights, bookmarks, re
             </div>
           </Reveal>
 
-          {/* my shelf */}
           <Reveal delay={80} className="xl:col-span-2">
             <div className="h-full rounded-lg border border-night-500/60 bg-night-800/60 p-6">
               <p className="flex items-center gap-2 text-xs font-bold text-mist-500"><IconBookmark size={15} className="text-gold-400" /> قفسهٔ من <span className="rounded bg-night-700 px-2 py-0.5 text-[10px] text-gold-400">{faNum(shelfBooks.length)} کتاب</span></p>
@@ -316,7 +379,6 @@ export default function LibraryView({ books, progress, highlights, bookmarks, re
             </div>
           </Reveal>
 
-          {/* notes */}
           <Reveal delay={140}>
             <div className="h-full rounded-lg border border-night-500/60 bg-night-800/60 p-6">
               <p className="flex items-center gap-2 text-xs font-bold text-mist-500"><IconNote size={15} className="text-turq-400" /> یادداشت‌ها و برجستگی‌ها <span className="rounded bg-night-700 px-2 py-0.5 text-[10px] text-turq-400">{faNum(highlights.length)}</span></p>
@@ -335,7 +397,6 @@ export default function LibraryView({ books, progress, highlights, bookmarks, re
             </div>
           </Reveal>
 
-          {/* bookmarks */}
           <Reveal delay={200}>
             <div className="h-full rounded-lg border border-night-500/60 bg-night-800/60 p-6">
               <p className="flex items-center gap-2 text-xs font-bold text-mist-500"><IconBookmark size={15} className="text-gold-400" /> نشانک‌های فصل‌ها <span className="rounded bg-night-700 px-2 py-0.5 text-[10px] text-gold-400">{faNum(myMarks.length)}</span></p>
@@ -357,7 +418,6 @@ export default function LibraryView({ books, progress, highlights, bookmarks, re
             </div>
           </Reveal>
 
-          {/* my reviews */}
           <Reveal delay={240} className="md:col-span-2 xl:col-span-2">
             <div className="h-full rounded-lg border border-night-500/60 bg-night-800/60 p-6">
               <p className="flex items-center gap-2 text-xs font-bold text-mist-500"><IconQuote size={15} className="text-gold-400" /> آخرین نقدهای کتابخانه <span className="rounded bg-night-700 px-2 py-0.5 text-[10px] text-gold-400">{faNum(reviews.length)}</span></p>
@@ -384,7 +444,6 @@ export default function LibraryView({ books, progress, highlights, bookmarks, re
         </div>
       </section>
 
-      {/* footer */}
       <footer className="border-t border-night-600/70 py-10 text-center">
         <p className="font-nastaliq text-lg leading-[2.4] text-mist-400">«یار اندر قفس است و باغ و چمن همه اوست…»</p>
         <p className="mt-3 text-[11px] text-mist-500">

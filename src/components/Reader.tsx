@@ -16,9 +16,11 @@ interface Props {
   bookmarks: Bookmark[];
   settings: ReaderSettings;
   onSettings: (s: ReaderSettings) => void;
-  onSaveProgress: (p: Progress) => void;
-  onHighlights: (h: Highlight[]) => void;
-  onBookmarks: (b: Bookmark[]) => void;
+  onSaveProgress: (bookId: string, p: Progress) => void;
+  onAddHighlight: (highlight: Omit<Highlight, 'id' | 'createdAt'>) => void;
+  onUpdateHighlight: (id: string, note: string) => void;
+  onDeleteHighlight: (id: string) => void;
+  onToggleBookmark: (bookId: string, chapter: number) => void;
   onClose: () => void;
   toast: (msg: string) => void;
 }
@@ -50,7 +52,7 @@ function getOffsetWithin(root: HTMLElement, node: Node, offset: number): number 
 }
 
 export default function Reader(props: Props) {
-  const { book, initialChapter, settings, onSettings, onSaveProgress, onHighlights, onBookmarks, onClose, toast } = props;
+  const { book, initialChapter, settings, onSettings, onSaveProgress, onAddHighlight, onUpdateHighlight, onDeleteHighlight, onToggleBookmark, onClose, toast } = props;
   const [chapter, setChapter] = useState(Math.min(initialChapter, book.chapters.length - 1));
   const [drawer, setDrawer] = useState<Drawer>(null);
   const [panel, setPanel] = useState(false);
@@ -58,8 +60,6 @@ export default function Reader(props: Props) {
   const [popover, setPopover] = useState<{ id: string; x: number; y: number } | null>(null);
   const [noteDraft, setNoteDraft] = useState('');
   const [jumpTo, setJumpTo] = useState<number | null>(null);
-  /* for books uploaded as a single PDF we can render the real pages —
-     pixel-exact text regardless of how the font encodes it. Default to it. */
   const [mode, setMode] = useState<'text' | 'pages'>(book.originalPdf ? 'pages' : 'text');
 
   const surfaceRef = useRef<HTMLDivElement>(null);
@@ -76,7 +76,6 @@ export default function Reader(props: Props) {
   const widthCls = settings.width === 'narrow' ? 'max-w-xl' : settings.width === 'wide' ? 'max-w-4xl' : 'max-w-2xl';
   const gulzarPad = settings.font === 'gulzar' ? settings.lh + 0.5 : settings.lh;
 
-  /* ---------- progress ---------- */
   const handleScroll = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
@@ -86,17 +85,16 @@ export default function Reader(props: Props) {
     const now = Date.now();
     if (now - lastSave.current > 600) {
       lastSave.current = now;
-      onSaveProgress({ chapter, pct, updatedAt: now });
+      onSaveProgress(book.id, { chapter, pct, updatedAt: now });
     }
-  }, [chapter, total, onSaveProgress]);
+  }, [chapter, total, onSaveProgress, book.id]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: 0 });
-    onSaveProgress({ chapter, pct: chapter / total, updatedAt: Date.now() });
+    onSaveProgress(book.id, { chapter, pct: chapter / total, updatedAt: Date.now() });
     setToolbar(null);
     setPopover(null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chapter]);
+  }, [chapter, book.id, total, onSaveProgress]);
 
   useEffect(() => {
     if (jumpTo === null) return;
@@ -110,7 +108,6 @@ export default function Reader(props: Props) {
     return () => clearTimeout(t);
   }, [jumpTo, chapter]);
 
-  /* ---------- keyboard ---------- */
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement)?.tagName === 'TEXTAREA' || (e.target as HTMLElement)?.tagName === 'INPUT') return;
@@ -127,7 +124,6 @@ export default function Reader(props: Props) {
     return () => window.removeEventListener('keydown', h);
   }, [total]);
 
-  /* ---------- selection → highlight ---------- */
   const handleMouseUp = () => {
     setTimeout(() => {
       const sel = window.getSelection();
@@ -160,23 +156,24 @@ export default function Reader(props: Props) {
 
   const addHighlight = (color: string, withNote: boolean) => {
     if (!toolbar) return;
-    const h: Highlight = {
-      id: uid(), bookId: book.id, chapter, p: toolbar.p,
+    const h: Omit<Highlight, 'id' | 'createdAt'> = {
+      bookId: book.id, chapter, p: toolbar.p,
       start: toolbar.start, end: toolbar.end, color,
-      text: toolbar.text, note: '', createdAt: Date.now(),
+      text: toolbar.text, note: '',
     };
-    onHighlights([...props.highlights, h]);
+    onAddHighlight(h);
     window.getSelection()?.removeAllRanges();
     setToolbar(null);
     if (withNote) {
-      setPopover({ id: h.id, x: Math.min(toolbar.x, window.innerWidth - 180), y: Math.min(toolbar.y + 54, window.innerHeight - 200) });
+      const newHighlights = [...highlights, { ...h, id: uid(), createdAt: Date.now() } as Highlight];
+      const lastHl = newHighlights[newHighlights.length - 1];
+      setPopover({ id: lastHl.id, x: Math.min(toolbar.x, window.innerWidth - 180), y: Math.min(toolbar.y + 54, window.innerHeight - 200) });
       setNoteDraft('');
     } else {
       toast('برجسته شد ✒');
     }
   };
 
-  /* ---------- paragraph rendering with highlights ---------- */
   const renderPara = (text: string, idx: number, kind: string) => {
     const hls = highlights.filter((h) => h.chapter === chapter && h.p === idx).sort((a, b) => a.start - b.start);
     const nodes: React.ReactNode[] = [];
@@ -253,36 +250,33 @@ export default function Reader(props: Props) {
 
   const updateNote = () => {
     if (!popover) return;
-    onHighlights(props.highlights.map((h) => (h.id === popover.id ? { ...h, note: noteDraft } : h)));
+    onUpdateHighlight(popover.id, noteDraft);
     setPopover(null);
     toast(noteDraft.trim() ? 'یادداشت ذخیره شد' : 'یادداشت برداشته شد');
   };
 
   const deleteHl = () => {
     if (!popover) return;
-    onHighlights(props.highlights.filter((h) => h.id !== popover.id));
+    onDeleteHighlight(popover.id);
     setPopover(null);
     toast('برجستگی حذف شد');
   };
 
   const toggleBookmark = () => {
+    onToggleBookmark(book.id, chapter);
     if (bookmarked) {
-      onBookmarks(props.bookmarks.filter((b) => !(b.bookId === book.id && b.chapter === chapter)));
       toast('نشانک برداشته شد');
     } else {
-      onBookmarks([...props.bookmarks, { id: uid(), bookId: book.id, chapter, createdAt: Date.now() }]);
       toast('نشانک گذاشته شد 🔖');
     }
   };
 
   return (
     <div className={cx('reader-pane fixed inset-0 z-50 flex flex-col')} data-rtheme={settings.theme}>
-      {/* top progress line */}
       <div className="absolute inset-x-0 top-0 z-30 h-[3px]" style={{ background: 'color-mix(in srgb, var(--pg-muted) 20%, transparent)' }}>
         <div className="h-full transition-all duration-500" style={{ width: `${pctNow}%`, background: 'var(--pg-accent)' }} />
       </div>
 
-      {/* chrome header */}
       <header className="relative z-20 flex items-center gap-2 border-b px-3 py-2.5 sm:px-5" style={{ borderColor: 'var(--pg-line)', background: 'color-mix(in srgb, var(--pg-bg) 92%, black)' }}>
         <button onClick={onClose} className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm transition-colors hover:bg-white/5" style={{ color: 'var(--pg-muted)' }}>
           <IconClose size={17} /> <span className="hidden sm:inline">بازگشت</span>
@@ -295,7 +289,6 @@ export default function Reader(props: Props) {
           </p>
         </div>
 
-        {/* display mode: real PDF pages vs. extracted text */}
         {book.originalPdf && (
           <div className="me-1 flex items-center rounded-md border p-0.5" style={{ borderColor: 'var(--pg-line)' }}>
             <button
@@ -315,7 +308,6 @@ export default function Reader(props: Props) {
           </div>
         )}
 
-        {/* quick controls */}
         <div className="flex items-center gap-1">
           <button onClick={() => onSettings({ ...settings, size: Math.max(13, settings.size - 1) })} className="rounded-md p-1.5 transition-colors hover:bg-white/5" style={{ color: 'var(--pg-muted)' }} aria-label="کوچک‌تر"><IconMinus size={16} /></button>
           <span className="w-7 text-center text-xs font-bold" style={{ color: 'var(--pg-text)' }}>{faNum(settings.size)}</span>
@@ -341,7 +333,6 @@ export default function Reader(props: Props) {
         </button>
       </header>
 
-      {/* settings strip */}
       {panel && (
         <div className="pop-in relative z-20 flex flex-wrap items-center gap-x-5 gap-y-2.5 border-b px-4 py-3 sm:px-6" style={{ borderColor: 'var(--pg-line)', background: 'color-mix(in srgb, var(--pg-bg) 96%, black)' }}>
           <div className="flex items-center gap-1.5">
@@ -382,7 +373,6 @@ export default function Reader(props: Props) {
       )}
 
       <div className="relative flex min-h-0 flex-1">
-        {/* drawer */}
         {drawer && (
           <>
             <div className="absolute inset-0 z-10 bg-black/40" onClick={() => setDrawer(null)} />
@@ -449,7 +439,7 @@ export default function Reader(props: Props) {
                         </div>
                         <div className="mt-2 flex gap-2">
                           <button onClick={() => { setChapter(h.chapter); setJumpTo(h.p); setDrawer(null); }} className="rounded bg-white/5 px-2.5 py-1 text-[11px] transition-colors hover:bg-white/10" style={{ color: 'var(--pg-text)' }}>پرش به متن</button>
-                          <button onClick={() => { onHighlights(props.highlights.filter((x) => x.id !== h.id)); }} className="flex items-center gap-1 rounded px-2 py-1 text-[11px] text-[#c9564e] transition-colors hover:bg-[#c9564e]/10"><IconTrash size={12} /> حذف</button>
+                          <button onClick={() => onDeleteHighlight(h.id)} className="flex items-center gap-1 rounded px-2 py-1 text-[11px] text-[#c9564e] transition-colors hover:bg-[#c9564e]/10"><IconTrash size={12} /> حذف</button>
                         </div>
                       </div>
                     ))}
@@ -460,19 +450,17 @@ export default function Reader(props: Props) {
           </>
         )}
 
-        {/* reading surface */}
         {mode === 'pages' && book.originalPdf ? (
           <div className="reader-surface min-h-0 flex-1 overflow-hidden">
             <ReaderPages
               bookId={book.id}
               bookTitle={book.title}
-              onProgressPct={(pct) => onSaveProgress({ chapter, pct, updatedAt: Date.now() })}
+              onProgressPct={(pct) => onSaveProgress(book.id, { chapter, pct, updatedAt: Date.now() })}
             />
           </div>
         ) : (
         <div ref={scrollRef} onScroll={handleScroll} className="reader-surface min-h-0 flex-1 overflow-y-auto">
           <div ref={surfaceRef} key={chapter} className={cx('page-in mx-auto px-5 py-10 sm:px-8 sm:py-14', widthCls)} style={{ color: 'var(--pg-text)' }}>
-            {/* chapter header */}
             <header className="mb-10 text-center">
               <p className="mb-2 text-[11px] font-bold tracking-[0.2em]" style={{ color: 'var(--pg-accent)' }}>
                 {book.title} · {book.author}
@@ -495,14 +483,12 @@ export default function Reader(props: Props) {
               renderPara(pa.text, i, pa.k)
             )))}
 
-            {/* end ornament */}
             <div className="mt-14 flex items-center justify-center gap-3" style={{ color: 'var(--pg-muted)' }}>
               <span className="h-px w-20" style={{ background: 'var(--pg-line)' }} />
               <span className="font-display text-lg" style={{ color: 'var(--pg-accent)' }}>❖</span>
               <span className="h-px w-20" style={{ background: 'var(--pg-line)' }} />
             </div>
 
-            {/* chapter nav */}
             <footer className="mt-8 flex items-center justify-between gap-3 border-t pt-6" style={{ borderColor: 'var(--pg-line)' }}>
               <button
                 onClick={() => setChapter((c) => Math.max(0, c - 1))}
@@ -529,7 +515,6 @@ export default function Reader(props: Props) {
         )}
       </div>
 
-      {/* selection toolbar */}
       {toolbar && (
         <div className="pop-in fixed z-[70] flex -translate-x-1/2 -translate-y-[115%] items-center gap-1 rounded-lg border p-1.5 shadow-2xl" style={{ left: toolbar.x, top: toolbar.y, background: 'var(--pg-bg)', borderColor: 'var(--pg-line)' }}>
           <span className="pe-1 ps-2 text-[11px] font-bold" style={{ color: 'var(--pg-muted)' }}>برجسته:</span>
@@ -543,7 +528,6 @@ export default function Reader(props: Props) {
         </div>
       )}
 
-      {/* note popover */}
       {popover && (
         <div className="pop-in fixed z-[75] w-[280px] -translate-x-1/2 rounded-lg border p-3 shadow-2xl" style={{ left: popover.x, top: popover.y, background: 'var(--pg-bg)', borderColor: 'var(--pg-line)' }}>
           <p className="mb-2 flex items-center gap-1.5 text-[11px] font-bold" style={{ color: 'var(--pg-muted)' }}>
